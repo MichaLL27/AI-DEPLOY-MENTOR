@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import AdmZip from "adm-zip";
 import type { Project } from "@shared/schema";
 import { classifyProject } from "./projectClassifier";
@@ -13,6 +14,10 @@ export async function analyzeZipProject(project: Project): Promise<{
   projectValidity: string;
   validationErrors: string[];
   analysisReport: string;
+  normalizedStatus: string;
+  normalizedFolderPath: string | null;
+  normalizedReport: string;
+  readyForDeploy: boolean;
 }> {
   if (project.sourceType !== "zip" || !project.zipStoredPath) {
     throw new Error("Project must be ZIP type with stored path");
@@ -23,7 +28,11 @@ export async function analyzeZipProject(project: Project): Promise<{
   }
 
   // Create temp extraction directory
-  const extractDir = path.join(process.cwd(), "tmp", "zip-analysis", project.id);
+  const isVercel = process.env.VERCEL === "1";
+  const extractDir = isVercel
+    ? path.join(os.tmpdir(), "zip-analysis", project.id)
+    : path.join(process.cwd(), "tmp", "zip-analysis", project.id);
+    
   fs.mkdirSync(extractDir, { recursive: true });
 
   try {

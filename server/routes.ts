@@ -21,8 +21,15 @@ import multer from "multer";
 import * as fs from "fs";
 import * as path from "path";
 
+import * as os from "os";
+
 // Configure multer for ZIP uploads
-const uploadDir = path.join(process.cwd(), "uploads");
+// On Vercel, we must use /tmp. On local, we can use uploads/
+const isVercel = process.env.VERCEL === "1";
+const uploadDir = isVercel 
+  ? path.join(os.tmpdir(), "uploads") 
+  : path.join(process.cwd(), "uploads");
+
 fs.mkdirSync(uploadDir, { recursive: true });
 
 const upload = multer({

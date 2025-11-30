@@ -1,5 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
+import * as os from "os";
 import type { Project } from "@shared/schema";
 
 export interface NormalizationResult {
@@ -17,7 +18,10 @@ export async function normalizeProjectStructure(
   extractedFolderPath: string
 ): Promise<NormalizationResult> {
   const actions: string[] = [];
-  const normalizedRoot = path.join(process.cwd(), "normalized", project.id);
+  const isVercel = process.env.VERCEL === "1";
+  const normalizedRoot = isVercel
+    ? path.join(os.tmpdir(), "normalized", project.id)
+    : path.join(process.cwd(), "normalized", project.id);
 
   try {
     // Clean and ensure normalized directory
