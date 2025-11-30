@@ -37,6 +37,7 @@ import {
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
@@ -254,9 +255,54 @@ export default function ProjectDetail() {
   const isGeneratingIos = generateIosMutation.isPending || project.mobileIosStatus === "building";
   const canAutoFix = !project.readyForDeploy && project.normalizedStatus === "success";
   const isAutoFixing = autoFixMutation.isPending || project.autoFixStatus === "running";
+  const autoReadyMessage = (project as any).autoReadyMessage;
 
   return (
     <div className="container max-w-5xl mx-auto py-8 px-4">
+      {autoReadyMessage && (
+        <Alert className="mb-8 border-green-600 bg-green-50 dark:bg-green-950">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="ml-3">
+            <p className="font-semibold text-green-900 dark:text-green-100">{autoReadyMessage}</p>
+            <p className="text-sm text-green-800 dark:text-green-200 mt-1">
+              This project was automatically normalized, repaired and validated. You can deploy it now with one click.
+            </p>
+            <div className="flex gap-2 mt-3">
+              <Button
+                onClick={() => deployMutation.mutate()}
+                disabled={isDeploying}
+                className="bg-green-600 hover:bg-green-700 text-white"
+                data-testid="button-deploy-now-ready"
+              >
+                {isDeploying ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Rocket className="h-4 w-4 mr-2" />
+                )}
+                Deploy Now
+              </Button>
+              {project.autoFixReport && (
+                <Button
+                  variant="outline"
+                  onClick={() => setExpandAutoFix(true)}
+                  data-testid="button-view-autofix-ready"
+                >
+                  View Auto-Fix Report
+                </Button>
+              )}
+              {prs && prs.length > 0 && (
+                <Button
+                  variant="outline"
+                  onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
+                  data-testid="button-view-pr-ready"
+                >
+                  View Pull Request
+                </Button>
+              )}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
       <div className="mb-8">
         <Link href="/">
           <Button variant="ghost" size="sm" className="mb-4" data-testid="button-back">

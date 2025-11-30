@@ -11,6 +11,7 @@ import { classifyProject } from "./services/projectClassifier";
 import { normalizeProjectStructure } from "./services/projectNormalizer";
 import { autoFixProject } from "./services/autoFixService";
 import { createAutoPullRequest, mergePullRequest, closePullRequest } from "./services/pullRequestService";
+import { getAutoReadyMessage } from "./utils/projectState";
 import { pullRequests } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { ZodError } from "zod";
@@ -44,7 +45,11 @@ export async function registerRoutes(
   app.get("/api/projects", async (req, res) => {
     try {
       const projects = await storage.getAllProjects();
-      res.json(projects);
+      const enriched = projects.map(p => ({
+        ...p,
+        autoReadyMessage: getAutoReadyMessage(p),
+      }));
+      res.json(enriched);
     } catch (error) {
       console.error("Error fetching projects:", error);
       res.status(500).json({ error: "Failed to fetch projects" });
@@ -61,7 +66,10 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Project not found" });
       }
       
-      res.json(project);
+      res.json({
+        ...project,
+        autoReadyMessage: getAutoReadyMessage(project),
+      });
     } catch (error) {
       console.error("Error fetching project:", error);
       res.status(500).json({ error: "Failed to fetch project" });

@@ -5,6 +5,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { StatusBadge } from "./status-badge";
 import { SourceIcon } from "./source-icon";
 import { 
@@ -13,7 +14,8 @@ import {
   ExternalLink, 
   ChevronRight,
   Loader2,
-  Clock
+  Clock,
+  CheckCircle
 } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 
@@ -110,6 +112,12 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
           <div className="flex items-center gap-3 flex-wrap sm:flex-nowrap">
             <StatusBadge status={project.status} />
+            {(project as any).autoReadyMessage && (
+              <Badge className="flex items-center gap-1 bg-green-600 hover:bg-green-700">
+                <CheckCircle className="h-3 w-3" />
+                Auto-fixed
+              </Badge>
+            )}
 
             {canRunQa && (
               <Button
