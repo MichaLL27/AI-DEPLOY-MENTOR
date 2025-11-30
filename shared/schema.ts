@@ -26,6 +26,10 @@ export const projects = pgTable("projects", {
   status: text("status").notNull().default("registered").$type<ProjectStatus>(),
   qaReport: text("qa_report"),
   deployedUrl: text("deployed_url"),
+  renderServiceId: text("render_service_id"),
+  renderDashboardUrl: text("render_dashboard_url"),
+  lastDeployId: text("last_deploy_id"),
+  lastDeployStatus: text("last_deploy_status"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
@@ -34,10 +38,14 @@ export const insertProjectSchema = createInsertSchema(projects).pick({
   name: true,
   sourceType: true,
   sourceValue: true,
+  renderServiceId: true,
+  renderDashboardUrl: true,
 }).extend({
   name: z.string().min(1, "Project name is required").max(100, "Name too long"),
   sourceType: z.enum(sourceTypeValues),
   sourceValue: z.string().min(1, "Source URL or path is required"),
+  renderServiceId: z.string().optional().nullable(),
+  renderDashboardUrl: z.string().optional().nullable(),
 });
 
 export type InsertProject = z.infer<typeof insertProjectSchema>;

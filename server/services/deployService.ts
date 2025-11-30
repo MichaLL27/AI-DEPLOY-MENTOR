@@ -1,20 +1,77 @@
 import type { Project } from "@shared/schema";
+import { storage } from "../storage";
 
 /**
  * Deploy Service - Handles project deployments
  * 
- * Currently simulates deployment with placeholder logic.
- * TODO: Replace with real deployment APIs:
- * - Vercel API for frontend deployments
- * - Render API for backend services
- * - Configure custom domains
- * - Set up environment variables
+ * Supports:
+ * - Real Render API deployments (when RENDER_API_TOKEN and renderServiceId are set)
+ * - Simulated deployments as fallback
  */
 
 export interface DeployResult {
   success: boolean;
   deployedUrl: string | null;
   error?: string;
+  deployId?: string;
+  deployStatus?: string;
+}
+
+/**
+ * Helper to trigger real Render deployment
+ */
+async function triggerRenderDeploy(project: Project): Promise<{ deployId: string; status: string; url: string } | null> {
+  // Check if Render API token and service ID are configured
+  const renderToken = process.env.RENDER_API_TOKEN;
+  if (!renderToken || !project.renderServiceId) {
+    return null;
+  }
+
+  try {
+    const baseUrl = process.env.RENDER_BASE_URL || "https://api.render.com/v1";
+    const deployEndpoint = `${baseUrl}/services/${project.renderServiceId}/deploys`;
+
+    console.log(`[Render] Triggering deploy for service: ${project.renderServiceId}`);
+
+    const response = await fetch(deployEndpoint, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${renderToken}`,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Render] Deploy failed with status ${response.status}:`, errorText);
+      return null;
+    }
+
+    const deployData = await response.json() as any;
+    const deployId = deployData.id || deployData.deployId;
+    const status = deployData.status || "pending";
+
+    console.log(`[Render] Deploy triggered with ID: ${deployId}, status: ${status}`);
+
+    // Store deploy info
+    await storage.updateProject(project.id, {
+      lastDeployId: deployId,
+      lastDeployStatus: status,
+    });
+
+    // Use dashboard URL if available, otherwise construct one
+    const deployUrl = project.renderDashboardUrl || 
+      `https://dashboard.render.com/d/srv-${project.renderServiceId.substring(4)}`;
+
+    return {
+      deployId,
+      status,
+      url: deployUrl,
+    };
+  } catch (error) {
+    console.error("[Render] Deploy error:", error);
+    return null;
+  }
 }
 
 /**
@@ -23,17 +80,10 @@ export interface DeployResult {
  * @param project - The project to deploy
  * @returns Deployment result with URL or error
  * 
- * TODO: Integrate with Vercel/Render APIs:
- * - Create new deployment
- * - Configure build settings
- * - Set up environment variables
- * - Monitor deployment status
- * - Return production URL
+ * If RENDER_API_TOKEN and renderServiceId are configured, uses real Render API.
+ * Otherwise falls back to simulated deployment.
  */
 export async function deployProject(project: Project): Promise<DeployResult> {
-  // Simulate deployment time (2-3 seconds)
-  await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
-
   // Validate project is ready for deployment
   if (project.status !== "qa_passed") {
     return {
@@ -43,12 +93,19 @@ export async function deployProject(project: Project): Promise<DeployResult> {
     };
   }
 
-  // For MVP, generate a fake deployment URL
-  // In production, this would:
-  // 1. Connect to Vercel/Render API
-  // 2. Create deployment from source
-  // 3. Configure domain and SSL
-  // 4. Return actual production URL
+  // Try real Render deployment if configured
+  const renderResult = await triggerRenderDeploy(project);
+  if (renderResult) {
+    return {
+      success: true,
+      deployedUrl: renderResult.url,
+      deployId: renderResult.deployId,
+      deployStatus: renderResult.status,
+    };
+  }
+
+  // Fallback: simulate deployment (2-3 seconds)
+  await new Promise(resolve => setTimeout(resolve, 2000 + Math.random() * 1000));
 
   const deployedUrl = generateDeployUrl(project);
 

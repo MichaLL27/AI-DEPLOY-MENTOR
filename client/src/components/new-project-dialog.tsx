@@ -2,6 +2,8 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { insertProjectSchema, type InsertProject, sourceTypeValues } from "@shared/schema";
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -64,6 +66,7 @@ const sourceTypeLabels: Record<string, { label: string; icon: IconComponent; pla
 
 export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) {
   const { toast } = useToast();
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const form = useForm<InsertProject>({
     resolver: zodResolver(insertProjectSchema),
@@ -71,6 +74,8 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
       name: "",
       sourceType: "github",
       sourceValue: "",
+      renderServiceId: "",
+      renderDashboardUrl: "",
     },
   });
 
@@ -198,6 +203,68 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
                 </FormItem>
               )}
             />
+
+            <div className="border-t pt-4">
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-2 text-sm font-medium hover:text-foreground text-muted-foreground transition-colors"
+                data-testid="button-toggle-advanced"
+              >
+                <ChevronDown 
+                  className={`h-4 w-4 transition-transform ${showAdvanced ? 'rotate-180' : ''}`}
+                />
+                Advanced (Optional)
+              </button>
+              
+              {showAdvanced && (
+                <div className="space-y-4 mt-4 pt-4 border-t">
+                  <FormField
+                    control={form.control}
+                    name="renderServiceId"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Render Service ID</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="srv-xxxxx"
+                            data-testid="input-render-service-id"
+                            {...field}
+                            value={field.value || ""}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Your Render service ID for real deployment integration (optional).
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+
+                  <FormField
+                    control={form.control}
+                    name="renderDashboardUrl"
+                    render={({ field }) => (
+                      <FormItem>
+                        <FormLabel>Render Dashboard URL</FormLabel>
+                        <FormControl>
+                          <Input
+                            placeholder="https://dashboard.render.com/d/srv-xxxxx"
+                            data-testid="input-render-dashboard-url"
+                            {...field}
+                            value={field.value || ""}
+                          />
+                        </FormControl>
+                        <FormDescription>
+                          Direct link to your Render dashboard for this service (optional).
+                        </FormDescription>
+                        <FormMessage />
+                      </FormItem>
+                    )}
+                  />
+                </div>
+              )}
+            </div>
 
             <div className="flex justify-end gap-3 pt-4">
               <Button

@@ -56,6 +56,27 @@ export async function registerRoutes(
     }
   });
 
+  // Optional Render deploy status endpoint
+  app.get("/api/projects/:id/deploy-status", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+      
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        deployId: project.lastDeployId,
+        status: project.lastDeployStatus,
+        deployedUrl: project.deployedUrl,
+      });
+    } catch (error) {
+      console.error("Error fetching deploy status:", error);
+      res.status(500).json({ error: "Failed to fetch deploy status" });
+    }
+  });
+
   // POST /api/projects/:id/run-qa - Run QA on project
   app.post("/api/projects/:id/run-qa", async (req, res) => {
     try {

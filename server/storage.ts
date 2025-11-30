@@ -34,6 +34,8 @@ export class DatabaseStorage implements IStorage {
         name: insertProject.name,
         sourceType: insertProject.sourceType,
         sourceValue: insertProject.sourceValue,
+        renderServiceId: insertProject.renderServiceId || null,
+        renderDashboardUrl: insertProject.renderDashboardUrl || null,
         status: "registered",
       })
       .returning();
