@@ -34,9 +34,9 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
   try {
     const report = await pRetry(
       async () => {
-        // the newest OpenAI model is "gpt-5" which was released August 7, 2025. do not change this unless explicitly requested by the user
+        // Using GPT-4o for best balance of code analysis capability and speed
         const response = await openai.chat.completions.create({
-          model: "gpt-5",
+          model: "gpt-4o",
           messages: [
             {
               role: "system",
