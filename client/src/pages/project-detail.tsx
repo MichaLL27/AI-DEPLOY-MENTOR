@@ -1,0 +1,325 @@
+import { useQuery, useMutation } from "@tanstack/react-query";
+import { useParams, Link } from "wouter";
+import type { Project } from "@shared/schema";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { useToast } from "@/hooks/use-toast";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { StatusBadge } from "@/components/status-badge";
+import { SourceIcon } from "@/components/source-icon";
+import { StatusTimeline } from "@/components/status-timeline";
+import { ProjectDetailSkeleton } from "@/components/project-skeleton";
+import {
+  ArrowLeft,
+  PlayCircle,
+  Rocket,
+  ExternalLink,
+  Copy,
+  Check,
+  Clock,
+  RefreshCw,
+  Loader2,
+  FileText,
+  Link as LinkIcon,
+} from "lucide-react";
+import { formatDistanceToNow, format } from "date-fns";
+import { useState } from "react";
+
+export default function ProjectDetail() {
+  const { id } = useParams<{ id: string }>();
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+
+  const { data: project, isLoading, error } = useQuery<Project>({
+    queryKey: ["/api/projects", id],
+  });
+
+  const runQaMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/projects/${id}/run-qa`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "QA completed",
+        description: "Quality checks have passed successfully.",
+      });
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "QA failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deployMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/projects/${id}/deploy`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "Deployment successful",
+        description: `Your project is now live at ${data.deployedUrl}`,
+      });
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "Deployment failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const copyToClipboard = async (text: string) => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+    toast({
+      title: "Copied to clipboard",
+      description: "The URL has been copied to your clipboard.",
+    });
+  };
+
+  if (isLoading) {
+    return (
+      <div className="container max-w-5xl mx-auto py-8 px-4">
+        <ProjectDetailSkeleton />
+      </div>
+    );
+  }
+
+  if (error || !project) {
+    return (
+      <div className="container max-w-5xl mx-auto py-8 px-4">
+        <div className="text-center py-12">
+          <h2 className="text-2xl font-semibold text-destructive mb-2">Project Not Found</h2>
+          <p className="text-muted-foreground mb-6">
+            The project you're looking for doesn't exist or has been removed.
+          </p>
+          <Link href="/">
+            <Button variant="outline">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to Projects
+            </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  const canRunQa = project.status === "registered" || project.status === "qa_failed";
+  const canDeploy = project.status === "qa_passed";
+  const isDeployed = project.status === "deployed";
+  const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
+  const isDeploying = project.status === "deploying" || deployMutation.isPending;
+
+  return (
+    <div className="container max-w-5xl mx-auto py-8 px-4">
+      <div className="mb-8">
+        <Link href="/">
+          <Button variant="ghost" size="sm" className="mb-4" data-testid="button-back">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Projects
+          </Button>
+        </Link>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
+              <span className="text-2xl font-bold text-primary">
+                {project.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h1 
+                className="text-2xl sm:text-3xl font-bold tracking-tight"
+                data-testid="text-project-title"
+              >
+                {project.name}
+              </h1>
+              <div className="flex items-center gap-3 mt-1">
+                <SourceIcon sourceType={project.sourceType} />
+                <StatusBadge status={project.status} />
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {canRunQa && (
+              <Button
+                variant="outline"
+                onClick={() => runQaMutation.mutate()}
+                disabled={isRunningQa}
+                data-testid="button-run-qa"
+              >
+                {isRunningQa ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <PlayCircle className="h-4 w-4 mr-2" />
+                )}
+                Run QA
+              </Button>
+            )}
+            {canDeploy && (
+              <Button
+                onClick={() => deployMutation.mutate()}
+                disabled={isDeploying}
+                data-testid="button-deploy"
+              >
+                {isDeploying ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Rocket className="h-4 w-4 mr-2" />
+                )}
+                Deploy Now
+              </Button>
+            )}
+            {isDeployed && project.deployedUrl && (
+              <Button asChild data-testid="button-view-live">
+                <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  View Live
+                </a>
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="mb-8">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base font-medium">Deployment Progress</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <StatusTimeline currentStatus={project.status} />
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="grid gap-6 md:grid-cols-2">
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2">
+            <FileText className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <CardTitle className="text-base font-medium">Project Details</CardTitle>
+              <CardDescription>Source information and timestamps</CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div>
+              <label className="text-sm font-medium text-muted-foreground">Source URL</label>
+              <div className="mt-1 flex items-center gap-2">
+                <code 
+                  className="flex-1 text-sm bg-muted px-3 py-2 rounded-md font-mono truncate"
+                  data-testid="text-source-url"
+                >
+                  {project.sourceValue}
+                </code>
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => copyToClipboard(project.sourceValue)}
+                  data-testid="button-copy-source"
+                >
+                  {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                  <Clock className="h-3.5 w-3.5" />
+                  Created
+                </label>
+                <p className="mt-1 text-sm" data-testid="text-created-at">
+                  {format(new Date(project.createdAt), "MMM d, yyyy 'at' h:mm a")}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-muted-foreground flex items-center gap-1.5">
+                  <RefreshCw className="h-3.5 w-3.5" />
+                  Updated
+                </label>
+                <p className="mt-1 text-sm" data-testid="text-updated-at">
+                  {formatDistanceToNow(new Date(project.updatedAt), { addSuffix: true })}
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="flex flex-row items-center gap-2">
+            <LinkIcon className="h-5 w-5 text-muted-foreground" />
+            <div>
+              <CardTitle className="text-base font-medium">Deployment Info</CardTitle>
+              <CardDescription>QA report and live URL</CardDescription>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {project.qaReport && (
+              <div>
+                <label className="text-sm font-medium text-muted-foreground">QA Report</label>
+                <div 
+                  className="mt-1 bg-muted p-3 rounded-md text-sm font-mono whitespace-pre-wrap"
+                  data-testid="text-qa-report"
+                >
+                  {project.qaReport}
+                </div>
+              </div>
+            )}
+
+            {project.deployedUrl && (
+              <div>
+                <label className="text-sm font-medium text-muted-foreground">Live URL</label>
+                <div className="mt-1 flex items-center gap-2">
+                  <a
+                    href={project.deployedUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-1 text-sm text-primary hover:underline font-mono bg-muted px-3 py-2 rounded-md truncate"
+                    data-testid="link-deployed-url"
+                  >
+                    {project.deployedUrl}
+                  </a>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => copyToClipboard(project.deployedUrl!)}
+                    data-testid="button-copy-url"
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {!project.qaReport && !project.deployedUrl && (
+              <div className="text-center py-6 text-muted-foreground">
+                <p className="text-sm">
+                  {project.status === "registered"
+                    ? "Run QA checks to generate a report"
+                    : project.status === "qa_passed"
+                    ? "Deploy your project to get a live URL"
+                    : "Waiting for deployment..."}
+                </p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}
