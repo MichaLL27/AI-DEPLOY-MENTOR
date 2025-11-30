@@ -37,7 +37,9 @@ interface NewProjectDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const sourceTypeLabels: Record<string, { label: string; icon: typeof SiGithub; placeholder: string }> = {
+type IconComponent = React.ComponentType<{ className?: string }>;
+
+const sourceTypeLabels: Record<string, { label: string; icon: IconComponent; placeholder: string }> = {
   github: { 
     label: "GitHub", 
     icon: SiGithub, 
