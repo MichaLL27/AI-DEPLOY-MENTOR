@@ -13,5 +13,7 @@ if (!process.env.DATABASE_URL) {
 // This will cause queries to fail, which we can catch
 const connectionString = process.env.DATABASE_URL || "postgres://placeholder:placeholder@localhost:5432/placeholder";
 
+console.log(`[DB] Initializing pool with ${process.env.DATABASE_URL ? "provided URL" : "placeholder URL"}`);
+
 const pool = new Pool({ connectionString });
 export const db = drizzle(pool, { schema });

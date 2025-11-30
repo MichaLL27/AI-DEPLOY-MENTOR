@@ -66,6 +66,11 @@ export async function registerRoutes(
     }
   }
   
+  // Health check endpoint
+  app.get("/api/health", (_req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // GET /api/projects - List all projects
   app.get("/api/projects", async (req, res) => {
     try {
