@@ -16,6 +16,7 @@ import { ValidityBadge } from "@/components/validity-badge";
 import { NormalizationBadge } from "@/components/normalization-badge";
 import { AutoFixBadge } from "@/components/auto-fix-badge";
 import { PullRequestList } from "@/components/pull-request-list";
+import { MonitoringPanel } from "@/components/monitoring-panel";
 import type { PullRequest } from "@shared/schema";
 import {
   ArrowLeft,
@@ -547,6 +548,12 @@ export default function ProjectDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {isDeployed && (
+        <div className="mb-8">
+          <MonitoringPanel project={project} />
+        </div>
+      )}
 
       {prs && prs.length > 0 && (
         <div className="mb-8">
