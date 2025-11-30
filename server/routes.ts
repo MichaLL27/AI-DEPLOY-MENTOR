@@ -30,8 +30,6 @@ const uploadDir = isVercel
   ? path.join(os.tmpdir(), "uploads") 
   : path.join(process.cwd(), "uploads");
 
-fs.mkdirSync(uploadDir, { recursive: true });
-
 const upload = multer({
   dest: uploadDir,
   fileFilter: (_req: any, file: any, cb: any) => {
@@ -48,6 +46,12 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
+  // Ensure upload directory exists
+  try {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  } catch (err) {
+    console.error("Failed to create upload directory:", err);
+  }
   
   // GET /api/projects - List all projects
   app.get("/api/projects", async (req, res) => {
