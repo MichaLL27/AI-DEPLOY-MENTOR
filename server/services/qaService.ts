@@ -1,5 +1,5 @@
 import type { Project } from "@shared/schema";
-import OpenAI from "openai";
+import { openai } from "../lib/openai";
 import pRetry, { AbortError } from "p-retry";
 import * as fs from "fs";
 import * as path from "path";
@@ -7,16 +7,6 @@ import { exec } from "child_process";
 import * as util from "util";
 
 const execAsync = util.promisify(exec);
-
-// Initialize OpenAI with the provided API key
-const apiKey = process.env.OPENAI_API_KEY;
-if (!apiKey) {
-  console.warn("OPENAI_API_KEY is not set. QA features will fail.");
-}
-
-const openai = new OpenAI({
-  apiKey: apiKey,
-});
 
 export interface QaResult {
   passed: boolean;

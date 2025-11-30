@@ -1,6 +1,11 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { Project } from "@shared/schema";
+import { openai } from "../lib/openai";
+import { exec } from "child_process";
+import * as util from "util";
+
+const execAsync = util.promisify(exec);
 
 export interface AutoFixResult {
   autoFixStatus: "success" | "failed";
@@ -58,6 +63,9 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 
     // Generate tsconfig.json if missing and needed
     await generateTsConfig(folderPath, projectType, actions);
+
+    // Attempt Deep Code Repair (Fix syntax/build errors)
+    await attemptCodeRepair(folderPath, actions);
 
     // Determine if ready for deploy
     const readyForDeploy = checkReadyForDeploy(projectType, folderPath);
@@ -434,6 +442,80 @@ async function generateTsConfig(
 
   fs.writeFileSync(tsConfigPath, JSON.stringify(tsConfig, null, 2));
   actions.push("Generated tsconfig.json");
+}
+
+/**
+ * Attempt to fix code errors using OpenAI
+ */
+async function attemptCodeRepair(
+  folderPath: string,
+  actions: string[]
+): Promise<void> {
+  // 1. Check for build/lint errors
+  let errorOutput = "";
+  try {
+    // Try build first
+    await execAsync("npm run build", { cwd: folderPath, timeout: 60000 });
+    // If build passes, try lint
+    await execAsync("npm run lint", { cwd: folderPath, timeout: 30000 });
+    return; // No errors found
+  } catch (e: any) {
+    errorOutput = e.stdout + "\n" + e.stderr;
+  }
+
+  if (!errorOutput) return;
+
+  // 2. Identify problematic file from error output
+  // Simple heuristic: look for file paths in the error
+  const fileMatch = errorOutput.match(/([a-zA-Z0-9_\-\/]+\.(ts|js|tsx|jsx|json)):/);
+  if (!fileMatch) {
+    actions.push("Detected build errors but could not identify file to fix.");
+    return;
+  }
+
+  const relativeFilePath = fileMatch[1];
+  const absoluteFilePath = path.join(folderPath, relativeFilePath);
+
+  if (!fs.existsSync(absoluteFilePath)) {
+    return;
+  }
+
+  // 3. Read file content
+  const fileContent = fs.readFileSync(absoluteFilePath, "utf-8");
+
+  // 4. Ask OpenAI to fix it
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert code repair agent. You will be given a file content and an error message. You must output ONLY the fixed file content. Do not include markdown formatting or explanations."
+        },
+        {
+          role: "user",
+          content: `File: ${relativeFilePath}
+Error:
+${errorOutput.slice(0, 1000)}
+
+Content:
+${fileContent}`
+        }
+      ]
+    });
+
+    const fixedContent = response.choices[0]?.message?.content;
+    if (fixedContent) {
+      // Strip markdown code blocks if present
+      const cleanContent = fixedContent.replace(/^```[a-z]*\n/, "").replace(/\n```$/, "");
+      
+      fs.writeFileSync(absoluteFilePath, cleanContent);
+      actions.push(`Repaired syntax error in ${relativeFilePath}`);
+    }
+  } catch (error) {
+    console.error("AI Code Repair failed:", error);
+    actions.push("Attempted AI code repair but failed.");
+  }
 }
 
 /**
