@@ -1,5 +1,5 @@
-import { drizzle } from "drizzle-orm/node-postgres";
-import pg from "pg";
+import { neon } from "@neondatabase/serverless";
+import { drizzle } from "drizzle-orm/neon-http";
 import * as schema from "@shared/schema";
 
 if (!process.env.DATABASE_URL) {
@@ -8,14 +8,7 @@ if (!process.env.DATABASE_URL) {
 
 const connectionString = process.env.DATABASE_URL || "postgres://placeholder:placeholder@localhost:5432/placeholder";
 
-console.log(`[DB] Initializing pool with ${process.env.DATABASE_URL ? "provided URL" : "placeholder URL"}`);
+console.log(`[DB] Initializing neon-http client with ${process.env.DATABASE_URL ? "provided URL" : "placeholder URL"}`);
 
-const pool = new pg.Pool({ connectionString });
-
-// Add error handler to prevent crash on connection issues
-pool.on('error', (err) => {
-  console.error('Unexpected error on idle client', err);
-  // Don't exit process, just log
-});
-
-export const db = drizzle(pool, { schema });
+const sql = neon(connectionString);
+export const db = drizzle(sql, { schema });
