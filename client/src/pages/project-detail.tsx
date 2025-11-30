@@ -9,6 +9,7 @@ import { StatusBadge } from "@/components/status-badge";
 import { SourceIcon } from "@/components/source-icon";
 import { StatusTimeline } from "@/components/status-timeline";
 import { ProjectDetailSkeleton } from "@/components/project-skeleton";
+import { AndroidBadge } from "@/components/android-badge";
 import {
   ArrowLeft,
   PlayCircle,
@@ -21,6 +22,8 @@ import {
   Loader2,
   FileText,
   Link as LinkIcon,
+  Smartphone,
+  Download,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -80,6 +83,29 @@ export default function ProjectDetail() {
     },
   });
 
+  const generateAndroidMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/mobile-android/${id}/generate`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "Android project generated",
+        description: "Your Android Studio project is ready for download.",
+      });
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "Android generation failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
@@ -122,6 +148,8 @@ export default function ProjectDetail() {
   const isDeployed = project.status === "deployed";
   const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
+  const canGenerateAndroid = isDeployed && project.deployedUrl;
+  const isGeneratingAndroid = generateAndroidMutation.isPending || project.mobileAndroidStatus === "building";
 
   return (
     <div className="container max-w-5xl mx-auto py-8 px-4">
@@ -192,14 +220,42 @@ export default function ProjectDetail() {
                 </a>
               </Button>
             )}
+
+            {canGenerateAndroid && project.mobileAndroidStatus !== "ready" && (
+              <Button
+                onClick={() => generateAndroidMutation.mutate()}
+                disabled={isGeneratingAndroid}
+                variant="outline"
+                data-testid="button-generate-android"
+              >
+                {isGeneratingAndroid ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Smartphone className="h-4 w-4 mr-2" />
+                )}
+                Generate Android App
+              </Button>
+            )}
+
+            {project.mobileAndroidStatus === "ready" && project.mobileAndroidDownloadUrl && (
+              <Button asChild data-testid="button-download-android">
+                <a href={project.mobileAndroidDownloadUrl} download>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download Android Project
+                </a>
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
       <div className="mb-8">
         <Card>
-          <CardHeader className="pb-3">
+          <CardHeader className="pb-3 flex flex-row items-center justify-between">
             <CardTitle className="text-base font-medium">Deployment Progress</CardTitle>
+            {isDeployed && (
+              <AndroidBadge status={project.mobileAndroidStatus} />
+            )}
           </CardHeader>
           <CardContent>
             <StatusTimeline currentStatus={project.status} />

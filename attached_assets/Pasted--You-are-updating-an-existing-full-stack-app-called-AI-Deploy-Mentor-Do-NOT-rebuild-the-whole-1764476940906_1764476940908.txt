@@ -1,0 +1,206 @@
+
+You are updating an existing full-stack app called **AI Deploy Mentor**.
+Do NOT rebuild the whole app – keep the current UI, routes and database.
+
+Add a new feature: **generate an Android wrapper project** for any project
+that already has a `deployedUrl`.
+
+The Android wrapper is a minimal Android Studio project with a WebView
+that loads the `deployedUrl` of the project.
+
+-------------------------------------------------------
+1. Data model changes
+-------------------------------------------------------
+
+In the `projects` table / model, add these OPTIONAL fields:
+
+- mobile_android_status         // "none" | "building" | "ready" | "failed"
+- mobile_android_download_url   // string | null
+
+Update:
+- the SQL schema / migrations
+- any JS/TS types for the Project model
+- any serialization to JSON (API responses)
+
+Default:
+- mobile_android_status = "none"
+- mobile_android_download_url = null
+
+-------------------------------------------------------
+2. Backend: Android build service
+-------------------------------------------------------
+
+Create a new module: `services/mobileAndroidService.js`
+
+Export a function:
+
+```js
+async function generateAndroidWrapper(project) { ... }
+module.exports = { generateAndroidWrapper };
+````
+
+Behavior of `generateAndroidWrapper(project)`:
+
+* If `!project.deployedUrl`, throw an error.
+* Use `fs` and `path` to:
+
+  1. Create a temporary folder, e.g.
+     `./tmp/android-builds/<project.id>/`
+
+  2. Inside it, create a **minimal Android project structure** that can be
+     opened in Android Studio:
+
+     Suggested structure:
+
+     * `android/app/src/main/AndroidManifest.xml`
+     * `android/app/src/main/java/com/aideploy/<ProjectId>/MainActivity.java`
+     * `android/app/src/main/res/layout/activity_main.xml`
+     * Gradle files:
+
+       * `android/build.gradle`
+       * `android/app/build.gradle`
+       * `settings.gradle`
+       * `gradle.properties`
+
+     The MainActivity should:
+
+     * extend `androidx.appcompat.app.AppCompatActivity`
+     * use a `WebView` in `activity_main.xml`
+     * enable JavaScript
+     * load `project.deployedUrl` in `onCreate()`.
+
+     Example (pseudo):
+
+     ```java
+     WebView webView = findViewById(R.id.webview);
+     webView.getSettings().setJavaScriptEnabled(true);
+     webView.setWebViewClient(new WebViewClient());
+     webView.loadUrl("<PROJECT_URL>");
+     ```
+
+     Replace `<PROJECT_URL>` with `project.deployedUrl` when generating
+     the files.
+
+  3. After generating all files, zip the `android/` folder into a single
+     ZIP file, e.g.
+     `./public/mobile-builds/android-project-<project.id>.zip`
+
+     You can use a Node zip library (like `archiver`) – add it as a
+     dependency in `package.json` if needed.
+
+  4. Return an object like:
+
+     ```js
+     return {
+       status: "ready",
+       downloadPath: "/mobile-builds/android-project-" + project.id + ".zip"
+     };
+     ```
+
+Make sure Express serves static files from `./public`, so `/mobile-builds/...`
+is publicly reachable.
+
+If any error happens, throw it so the caller can set status `"failed"`.
+
+---
+
+3. Backend API routes
+
+---
+
+Create a new route file `routes/mobileAndroid.js` and mount it under `/api/mobile-android`
+in the main server (`index.js` or wherever routes are registered).
+
+Add endpoint:
+
+### POST /api/mobile-android/:projectId/generate
+
+* Load the project by id.
+* If no project or no `deployedUrl`, return 400 JSON error.
+* Set `mobile_android_status = "building"` and save.
+* Call `generateAndroidWrapper(project)`.
+* On success:
+
+  * set `mobile_android_status = "ready"`
+  * set `mobile_android_download_url = result.downloadPath`
+* On error:
+
+  * set `mobile_android_status = "failed"`
+* Return the updated project as JSON.
+
+### GET /api/mobile-android/:projectId/status
+
+* Return only:
+
+  ```json
+  {
+    "mobile_android_status": "...",
+    "mobile_android_download_url": "..."
+  }
+  ```
+
+---
+
+4. Frontend UI changes
+
+---
+
+In the project list / project detail view:
+
+1. For projects with `status === "deployed"`:
+
+   * Add a button: **"Generate Android App"**.
+   * When clicked:
+
+     * Call `POST /api/mobile-android/:projectId/generate`.
+     * Show a small loading state / toast.
+     * After the call, start polling status.
+
+2. Add a small Android badge on each project card showing:
+
+   * "Not generated" if status is `"none"`.
+   * "Building…" if status is `"building"`.
+   * "Ready" if status is `"ready"`.
+   * "Failed" if status is `"failed"`.
+
+3. If `mobile_android_status === "ready"` and `mobile_android_download_url`
+   is not null:
+
+   * Show a **"Download Android Project"** button.
+   * Clicking it should open `mobile_android_download_url` in a new tab.
+
+---
+
+5. README update
+
+---
+
+Update `README.md` with a new section:
+
+**Android wrapper**
+
+* Explain that the app can generate an Android Studio project with a
+  WebView that loads the deployed URL.
+* Steps for the user:
+
+  1. Click “Generate Android App”.
+  2. Download the ZIP.
+  3. Open it in Android Studio.
+  4. Configure their own packageId / signing.
+  5. Build and upload the APK/AAB to Google Play.
+
+---
+
+6. Constraints
+
+---
+
+* Do NOT break existing QA or deploy features.
+* If file system or zip operations fail, log the error and set
+  `mobile_android_status = "failed"`, but keep the server running.
+* Keep the implementation as simple and clean as possible. This is an MVP
+  that generates a wrapper project, not a signed Play Store binary.
+
+ 
+
+ 

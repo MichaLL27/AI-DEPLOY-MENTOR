@@ -4,6 +4,7 @@ import { storage } from "./storage";
 import { insertProjectSchema } from "@shared/schema";
 import { runQaOnProject } from "./services/qaService";
 import { deployProject } from "./services/deployService";
+import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 
@@ -176,6 +177,61 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error deleting project:", error);
       res.status(500).json({ error: "Failed to delete project" });
+    }
+  });
+
+  // POST /api/mobile-android/:projectId/generate - Generate Android wrapper
+  app.post("/api/mobile-android/:projectId/generate", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const project = await storage.getProject(projectId);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!project.deployedUrl) {
+        return res.status(400).json({ error: "Project must be deployed before generating Android wrapper" });
+      }
+
+      // Update status to building
+      await storage.updateProject(projectId, { mobileAndroidStatus: "building" });
+
+      try {
+        const result = await generateAndroidWrapper(project);
+        const updatedProject = await storage.updateProject(projectId, {
+          mobileAndroidStatus: result.status,
+          mobileAndroidDownloadUrl: result.downloadPath,
+        });
+        res.json(updatedProject);
+      } catch (error) {
+        console.error("Android generation error:", error);
+        await storage.updateProject(projectId, { mobileAndroidStatus: "failed" });
+        return res.status(500).json({ error: `Failed to generate Android wrapper: ${error instanceof Error ? error.message : "Unknown error"}` });
+      }
+    } catch (error) {
+      console.error("Error in Android generation route:", error);
+      res.status(500).json({ error: "Failed to generate Android wrapper" });
+    }
+  });
+
+  // GET /api/mobile-android/:projectId/status - Get Android status
+  app.get("/api/mobile-android/:projectId/status", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const project = await storage.getProject(projectId);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        mobileAndroidStatus: project.mobileAndroidStatus,
+        mobileAndroidDownloadUrl: project.mobileAndroidDownloadUrl,
+      });
+    } catch (error) {
+      console.error("Error fetching Android status:", error);
+      res.status(500).json({ error: "Failed to fetch Android status" });
     }
   });
 

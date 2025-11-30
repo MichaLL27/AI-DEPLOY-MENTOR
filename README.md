@@ -170,3 +170,51 @@ Open http://localhost:5000 in your browser.
 - **AI**: OpenAI GPT-5 for code analysis via Replit AI Integrations
 
 All API communication is RESTful with JSON payloads.
+
+## Android Wrapper Generation
+
+AI Deploy Mentor can generate a minimal Android Studio project that wraps your deployed web app in a WebView.
+
+### How it works
+
+1. Deploy your project to get a live URL
+2. Click **"Generate Android App"** on the project detail page
+3. The app generates an Android Studio project structure
+4. Download the ZIP file containing the Android project
+5. Open it in Android Studio
+6. Customize package name and app signing
+7. Build and upload to Google Play Store
+
+### Generated Android Project Structure
+
+The generated project includes:
+
+- Complete Android project with Gradle build system
+- MainActivity with WebView loading your deployed URL
+- AndroidManifest.xml with internet permissions
+- Layout files with WebView configuration
+- Build configurations for Android API 24+
+
+### Customization Steps
+
+1. **Change Package Name**: Edit `build.gradle` in the app folder
+2. **Add App Icon**: Replace `res/mipmap/ic_launcher.png`
+3. **Sign for Release**: Generate a keystore and configure signing in Gradle
+4. **Configure Permissions**: Modify `AndroidManifest.xml` if needed
+5. **Build APK/AAB**: Use Android Studio's build menu
+
+The WebView:
+- Has JavaScript enabled for full web functionality
+- Supports DOM storage and databases
+- Is configured for modern web applications
+
+### Android Deployment
+
+After building:
+
+1. Generate a signed APK or App Bundle (AAB)
+2. Test on emulator or device
+3. Upload to Google Play Store or other app stores
+4. Users can now install your web app as a native Android app
+
+For detailed Android Studio documentation, visit: https://developer.android.com/studio
