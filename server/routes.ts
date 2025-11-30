@@ -6,8 +6,28 @@ import { runQaOnProject } from "./services/qaService";
 import { deployProject } from "./services/deployService";
 import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { generateIosWrapper } from "./services/mobileIosService";
+import { analyzeZipProject } from "./services/zipAnalyzer";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
+import multer from "multer";
+import * as fs from "fs";
+import * as path from "path";
+
+// Configure multer for ZIP uploads
+const uploadDir = path.join(process.cwd(), "uploads");
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const upload = multer({
+  dest: uploadDir,
+  fileFilter: (_req, file, cb) => {
+    if (file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed" || file.originalname.endsWith(".zip")) {
+      cb(null, true);
+    } else {
+      cb(new Error("Only ZIP files are allowed"));
+    }
+  },
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+});
 
 export async function registerRoutes(
   httpServer: Server,
@@ -288,6 +308,84 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching iOS status:", error);
       res.status(500).json({ error: "Failed to fetch iOS status" });
+    }
+  });
+
+  // POST /api/projects/upload-zip - Upload and analyze ZIP project
+  app.post("/api/projects/upload-zip", upload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) {
+        return res.status(400).json({ error: "No ZIP file provided" });
+      }
+
+      const projectName = (req.body.name as string) || req.file.originalname.replace(".zip", "");
+      const uploadedPath = req.file.path;
+
+      // Create organized storage path
+      const projectId = require("crypto").randomUUID().substring(0, 12);
+      const storedDir = path.join(process.cwd(), "uploads", "projects", projectId);
+      fs.mkdirSync(storedDir, { recursive: true });
+
+      const storedPath = path.join(storedDir, "source.zip");
+      fs.renameSync(uploadedPath, storedPath);
+
+      // Create project record
+      const project = await storage.createProject({
+        name: projectName,
+        sourceType: "zip",
+        sourceValue: storedPath,
+      });
+
+      // Update with ZIP metadata
+      let updatedProject = await storage.updateProject(project.id, {
+        zipOriginalFilename: req.file.originalname,
+        zipStoredPath: storedPath,
+        zipAnalysisStatus: "pending",
+      });
+
+      try {
+        // Analyze ZIP
+        const analysis = await analyzeZipProject(updatedProject);
+        updatedProject = await storage.updateProject(project.id, {
+          zipAnalysisStatus: "success",
+          projectType: analysis.projectType,
+          zipAnalysisReport: analysis.analysisReport,
+        });
+
+        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType}`);
+      } catch (error) {
+        console.error(`[ZIP] Analysis failed for ${project.id}:`, error);
+        updatedProject = await storage.updateProject(project.id, {
+          zipAnalysisStatus: "failed",
+          zipAnalysisReport: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        });
+      }
+
+      res.status(201).json(updatedProject);
+    } catch (error) {
+      console.error("Error uploading ZIP:", error);
+      res.status(500).json({ error: "Failed to upload and analyze ZIP file" });
+    }
+  });
+
+  // GET /api/projects/:id/zip-analysis - Get ZIP analysis details
+  app.get("/api/projects/:id/zip-analysis", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        zipAnalysisStatus: project.zipAnalysisStatus,
+        projectType: project.projectType,
+        zipAnalysisReport: project.zipAnalysisReport,
+      });
+    } catch (error) {
+      console.error("Error fetching ZIP analysis:", error);
+      res.status(500).json({ error: "Failed to fetch ZIP analysis" });
     }
   });
 

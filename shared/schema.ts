@@ -34,6 +34,11 @@ export const projects = pgTable("projects", {
   mobileAndroidDownloadUrl: text("mobile_android_download_url"),
   mobileIosStatus: text("mobile_ios_status").default("none"),
   mobileIosDownloadUrl: text("mobile_ios_download_url"),
+  zipOriginalFilename: text("zip_original_filename"),
+  zipStoredPath: text("zip_stored_path"),
+  zipAnalysisStatus: text("zip_analysis_status").default("none"),
+  zipAnalysisReport: text("zip_analysis_report"),
+  projectType: text("project_type"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

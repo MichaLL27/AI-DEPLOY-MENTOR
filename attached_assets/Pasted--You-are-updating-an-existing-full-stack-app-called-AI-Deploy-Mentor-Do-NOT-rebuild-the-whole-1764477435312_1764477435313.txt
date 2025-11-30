@@ -1,0 +1,281 @@
+
+You are updating an existing full-stack app called **AI Deploy Mentor**.
+Do NOT rebuild the whole app – keep the current UI, routes, database, and logic for QA/deploy.
+
+Your task now:  
+Add ZIP support with a **"ZIP Analyzer"** that validates and classifies uploaded project ZIP files.
+
+The goal:  
+A non-technical user can upload a ZIP file of their project (e.g. from Base44 or any builder),  
+and the system will:
+- store the ZIP,
+- analyze its contents,
+- detect the project type and structure,
+- produce a human-readable analysis report,
+- and update the project record accordingly.
+
+-------------------------------------------------------
+1. Data model changes (projects table)
+-------------------------------------------------------
+
+Extend the existing `projects` table/model with these fields:
+
+- `source_type`           // already exists? keep it, but now support "zip"
+- `source_value`          // for ZIP projects, this will be the saved ZIP path or identifier
+
+New fields:
+
+- `zip_original_filename`   // string | null
+- `zip_stored_path`         // string | null (path under ./uploads or similar)
+- `zip_analysis_status`     // "none" | "pending" | "success" | "failed"
+- `zip_analysis_report`     // TEXT or JSON, nullable (stores human-readable analysis)
+- `project_type`            // string | null (e.g. "static_web" | "node_backend" | "nextjs" | "unknown")
+
+Update:
+- DB schema / migrations
+- any Project TypeScript/JS types
+- API serialization so these fields appear in JSON.
+
+Default values:
+- `zip_analysis_status = "none"`
+- `project_type = null`
+- `zip_analysis_report = null`
+
+-------------------------------------------------------
+2. File upload handling (ZIP)
+-------------------------------------------------------
+
+Add support for uploading a ZIP file as a new project.
+
+Create or update a route file (e.g. `routes/projects.js`):
+
+### Endpoint: POST /api/projects/upload-zip
+
+- Accept `multipart/form-data` with:
+  - field `file` – the ZIP file
+  - optional field `name` – project name (string)
+
+Use `multer` or a similar library to handle file uploads.
+
+Behavior:
+
+1. Validate:
+   - file exists
+   - file has `.zip` extension (or valid ZIP mime-type)
+   - limit max size (e.g. 50MB) using multer config.
+
+2. Save the uploaded file under a directory such as:
+   - `./uploads/projects/<uuid>/source.zip`
+
+3. Create a new project in the DB with:
+   - `name` (from body or fallback to file name)
+   - `source_type = "zip"`
+   - `source_value = stored ZIP path`
+   - `zip_original_filename = original file name`
+   - `zip_stored_path = stored ZIP path`
+   - `zip_analysis_status = "pending"`
+   - `status = "registered"` (or similar current default)
+
+4. After inserting the project, enqueue or directly call the ZIP analyzer (see next section).
+
+5. Return the created project as JSON, including the initial analysis status.
+
+Note: if you already have `POST /api/projects` for JSON creation, keep it.  
+This is a **new endpoint** specifically for file upload.
+
+-------------------------------------------------------
+3. ZIP Analyzer service
+-------------------------------------------------------
+
+Create a new service module, e.g.:
+`services/zipAnalyzer.js`
+
+Export:
+
+```js
+async function analyzeZipProject(project) { ... }
+module.exports = { analyzeZipProject };
+````
+
+### Behavior of analyzeZipProject(project):
+
+1. Require that:
+
+   * `project.source_type === "zip"`
+   * `project.zip_stored_path` exists and points to a ZIP file.
+
+2. Create a temporary extraction folder, for example:
+   `./tmp/zip-analysis/<project.id>/`
+
+3. Unzip the project ZIP into this folder:
+
+   * Use a library like `adm-zip`, `unzipper`, or `yauzl` (add to package.json).
+   * Handle errors if the ZIP is invalid or corrupted.
+
+4. Inspect the extracted folder and detect:
+
+   * Presence of files:
+
+     * `package.json` ?
+     * `next.config.js`, `.next`, etc. ?
+     * `index.html` in root or `public/` ?
+   * Determine `project_type` by simple heuristic:
+
+     For example:
+
+     * If `package.json` exists AND `dependencies` includes `"next"`:
+
+       * `project_type = "nextjs"`
+
+     * Else if `package.json` exists AND there is a typical server file:
+       (`server.js`, `app.js`, `index.js` under `src/` or root):
+
+       * `project_type = "node_backend"`
+
+     * Else if an `index.html` exists (in root or top-level `public/`):
+
+       * `project_type = "static_web"`
+
+     * Otherwise:
+
+       * `project_type = "unknown"`
+
+5. Build a **human-readable analysis report** string, for example:
+
+   ```text
+   Project ZIP Analysis:
+   - Detected type: static_web
+   - Found files:
+     - index.html at /index.html
+     - assets at /assets
+   - No package.json found – this looks like a pure static site.
+   Recommended deployment: static hosting (e.g. Vercel/Netlify).
+   ```
+
+   Or for node backend:
+
+   ```text
+   Project ZIP Analysis:
+   - Detected type: node_backend
+   - Found package.json with dependencies: express, cors
+   - Detected potential entry point: server.js
+   Recommended deployment: Node service (e.g. Render web service).
+   ```
+
+6. Save results to the DB for this project:
+
+   * `zip_analysis_status = "success"`
+   * `project_type = <detected type>`
+   * `zip_analysis_report = <analysis string>`
+
+7. If any error occurs during unzipping or analysis:
+
+   * Set `zip_analysis_status = "failed"`
+   * Optionally set `zip_analysis_report = "Error: <message>"`
+   * Re-throw or log the error.
+
+Return the updated project (or at least the fields needed).
+
+---
+
+4. Hook analyzer into project flow
+
+---
+
+Decide how analysis is triggered:
+
+### Option A: Synchronous (simple MVP)
+
+* In `POST /api/projects/upload-zip`:
+
+  * after saving the project to the DB, immediately call:
+    `const updatedProject = await analyzeZipProject(project)`
+  * Return `updatedProject` as the response.
+
+### Option B: Async later (future)
+
+* For now, implement **Option A** (synchronous).
+* Option B could later move this to a background job queue.
+
+---
+
+5. API endpoint to view analysis
+
+---
+
+Extend your existing `GET /api/projects/:id` response so it includes:
+
+* `zip_analysis_status`
+* `project_type`
+* `zip_analysis_report`
+
+Optionally, add a dedicated endpoint (not required but useful):
+
+### GET /api/projects/:id/zip-analysis
+
+* Returns only:
+
+```json
+{
+  "zip_analysis_status": "...",
+  "project_type": "...",
+  "zip_analysis_report": "..."
+}
+```
+
+---
+
+6. Frontend changes (basic UI for ZIP)
+
+---
+
+Update the frontend (the AI Deploy Mentor dashboard) to support ZIP upload and analysis:
+
+1. In the "Create New Project" flow:
+
+   * Add a tab or option: **"Upload ZIP"**.
+   * Show a file input (accept `.zip`) and an optional name field.
+   * On submit, send `multipart/form-data` to `POST /api/projects/upload-zip`.
+
+2. After upload:
+
+   * Show the project with a badge like:
+
+     * "ZIP Analysis: pending" / "success" / "failed"
+   * Display `project_type` near the project name, e.g.:
+
+     * "Type: static web"
+     * "Type: node backend"
+     * "Type: unknown"
+
+3. If `zip_analysis_report` exists:
+
+   * Show it in a collapsible panel or modal under “ZIP Analysis”.
+   * This will help non-technical users understand what was detected.
+
+4. Use `project_type` later to help drive deployment choices
+   (for now, just show it; don’t change your deploy logic yet).
+
+---
+
+7. Safety & constraints
+
+---
+
+* Enforce a maximum ZIP size (e.g., 50MB) to avoid abuse.
+* Validate ZIP extension and mime-type.
+* Handle corrupted ZIPs gracefully: set `zip_analysis_status = "failed"`
+  and do not crash the server.
+* Do NOT remove or break existing functionality (QA, deploy, mobile wrappers).
+* Keep code modular: ZIP parsing logic should stay inside `services/zipAnalyzer.js`.
+
+---
+
+When you are done:
+
+* I should be able to upload a ZIP,
+* see it as a new project,
+* see its detected `project_type`,
+* and read a human-friendly `zip_analysis_report` in the UI.
+
+ 
