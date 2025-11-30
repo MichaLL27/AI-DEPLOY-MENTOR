@@ -14,6 +14,7 @@ import { IosBadge } from "@/components/ios-badge";
 import { ProjectTypeBadge } from "@/components/project-type-badge";
 import { ValidityBadge } from "@/components/validity-badge";
 import { NormalizationBadge } from "@/components/normalization-badge";
+import { AutoFixBadge } from "@/components/auto-fix-badge";
 import {
   ArrowLeft,
   PlayCircle,
@@ -30,6 +31,7 @@ import {
   Download,
   Apple,
   ChevronDown,
+  Wand2,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -40,6 +42,7 @@ export default function ProjectDetail() {
   const [copied, setCopied] = useState(false);
   const [expandValidation, setExpandValidation] = useState(false);
   const [expandNormalization, setExpandNormalization] = useState(false);
+  const [expandAutoFix, setExpandAutoFix] = useState(false);
 
   const { data: project, isLoading, error } = useQuery<Project>({
     queryKey: ["/api/projects", id],
@@ -137,6 +140,29 @@ export default function ProjectDetail() {
     },
   });
 
+  const autoFixMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/projects/${id}/auto-fix`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "Auto-fix completed",
+        description: data.readyForDeploy ? "Project is now ready for deployment!" : "Project was fixed. Check the report.",
+      });
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "Auto-fix failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
@@ -183,6 +209,8 @@ export default function ProjectDetail() {
   const isGeneratingAndroid = generateAndroidMutation.isPending || project.mobileAndroidStatus === "building";
   const canGenerateIos = isDeployed && project.deployedUrl;
   const isGeneratingIos = generateIosMutation.isPending || project.mobileIosStatus === "building";
+  const canAutoFix = !project.readyForDeploy && project.normalizedStatus === "success";
+  const isAutoFixing = autoFixMutation.isPending || project.autoFixStatus === "running";
 
   return (
     <div className="container max-w-5xl mx-auto py-8 px-4">
@@ -303,6 +331,22 @@ export default function ProjectDetail() {
                 </a>
               </Button>
             )}
+
+            {canAutoFix && (
+              <Button
+                onClick={() => autoFixMutation.mutate()}
+                disabled={isAutoFixing}
+                variant="outline"
+                data-testid="button-auto-fix"
+              >
+                {isAutoFixing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Wand2 className="h-4 w-4 mr-2" />
+                )}
+                Auto-fix Project
+              </Button>
+            )}
           </div>
         </div>
       </div>
@@ -315,6 +359,7 @@ export default function ProjectDetail() {
               <ProjectTypeBadge type={project.projectType} />
               <ValidityBadge validity={project.projectValidity} />
               <NormalizationBadge status={project.normalizedStatus} readyForDeploy={project.readyForDeploy === "true"} />
+              <AutoFixBadge status={project.autoFixStatus} />
               {isDeployed && (
                 <>
                   <AndroidBadge status={project.mobileAndroidStatus} />
@@ -382,6 +427,29 @@ export default function ProjectDetail() {
                   <div className="mt-3 text-sm">
                     <div className="bg-muted p-3 rounded font-mono text-xs whitespace-pre-wrap text-muted-foreground">
                       {project.normalizedReport}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {project.autoFixReport && (
+              <div className="border-t pt-4">
+                <button
+                  onClick={() => setExpandAutoFix(!expandAutoFix)}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="button-toggle-auto-fix"
+                >
+                  <ChevronDown 
+                    className={`h-4 w-4 transition-transform ${expandAutoFix ? 'rotate-180' : ''}`}
+                  />
+                  Auto-fix Report
+                </button>
+                
+                {expandAutoFix && (
+                  <div className="mt-3 text-sm">
+                    <div className="bg-muted p-3 rounded font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+                      {project.autoFixReport}
                     </div>
                   </div>
                 )}

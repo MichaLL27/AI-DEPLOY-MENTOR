@@ -9,6 +9,7 @@ import { generateIosWrapper } from "./services/mobileIosService";
 import { analyzeZipProject } from "./services/zipAnalyzer";
 import { classifyProject } from "./services/projectClassifier";
 import { normalizeProjectStructure } from "./services/projectNormalizer";
+import { autoFixProject } from "./services/autoFixService";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import multer from "multer";
@@ -442,6 +443,70 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching normalization:", error);
       res.status(500).json({ error: "Failed to fetch normalization" });
+    }
+  });
+
+  // POST /api/projects/:id/auto-fix - Run auto-fix on project
+  app.post("/api/projects/:id/auto-fix", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!project.normalizedFolderPath) {
+        return res.status(400).json({ error: "Project must be normalized before auto-fix" });
+      }
+
+      // Set running status
+      await storage.updateProject(id, { autoFixStatus: "running" });
+
+      try {
+        const result = await autoFixProject(project);
+        const updatedProject = await storage.updateProject(id, {
+          autoFixStatus: result.autoFixStatus,
+          autoFixReport: result.autoFixReport,
+          readyForDeploy: result.readyForDeploy ? "true" : "false",
+          autoFixedAt: new Date(),
+        });
+
+        console.log(`[AutoFix] Fixed project ${id}: ready=${result.readyForDeploy}`);
+        res.json(updatedProject);
+      } catch (error) {
+        console.error(`[AutoFix] Error fixing project ${id}:`, error);
+        const updatedProject = await storage.updateProject(id, {
+          autoFixStatus: "failed",
+          autoFixReport: `Auto-fix failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+        });
+        res.status(500).json(updatedProject);
+      }
+    } catch (error) {
+      console.error("Error in auto-fix route:", error);
+      res.status(500).json({ error: "Failed to run auto-fix" });
+    }
+  });
+
+  // GET /api/projects/:id/auto-fix - Get auto-fix details
+  app.get("/api/projects/:id/auto-fix", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        autoFixStatus: project.autoFixStatus || "none",
+        autoFixReport: project.autoFixReport,
+        autoFixedAt: project.autoFixedAt,
+        readyForDeploy: project.readyForDeploy === "true",
+      });
+    } catch (error) {
+      console.error("Error fetching auto-fix status:", error);
+      res.status(500).json({ error: "Failed to fetch auto-fix status" });
     }
   });
 

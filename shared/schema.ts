@@ -45,6 +45,9 @@ export const projects = pgTable("projects", {
   normalizedFolderPath: text("normalized_folder_path"),
   normalizedReport: text("normalized_report"),
   readyForDeploy: text("ready_for_deploy").default("false"),
+  autoFixStatus: text("auto_fix_status").default("none"),
+  autoFixReport: text("auto_fix_report"),
+  autoFixedAt: timestamp("auto_fixed_at"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

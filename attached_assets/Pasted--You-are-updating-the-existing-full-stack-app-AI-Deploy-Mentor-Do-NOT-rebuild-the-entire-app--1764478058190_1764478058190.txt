@@ -1,0 +1,330 @@
+
+You are updating the existing full-stack app **AI Deploy Mentor**.
+Do NOT rebuild the entire app.
+
+The app already has:
+- projects table
+- ZIP upload & extraction
+- project classification (project_type, project_validity, validation_errors)
+- normalization (normalized_folder_path, ready_for_deploy)
+- QA and deploy flows
+
+Your task now:
+Add an **Automatic Code Fix (auto-fix)** feature that tries to repair common
+problems in a project so that it becomes `ready_for_deploy` without the user
+having to edit files manually.
+
+This should work primarily for:
+- static_web
+- node_backend
+- nextjs
+- react_spa
+
+-------------------------------------------------------
+1. Data model changes (projects table)
+-------------------------------------------------------
+
+Extend the `projects` table / model with:
+
+- auto_fix_status         // "none" | "running" | "success" | "failed"
+- auto_fix_report         // TEXT or JSON, nullable (what was changed / tried)
+- auto_fixed_at           // timestamp, nullable
+
+Defaults:
+- auto_fix_status = "none"
+- auto_fix_report = null
+- auto_fixed_at = null
+
+Update:
+- schema / migrations
+- Project types/interfaces
+- API serialization
+
+-------------------------------------------------------
+2. Auto-fix service
+-------------------------------------------------------
+
+Create a new file:
+`services/autoFixService.js`
+
+Export:
+
+```js
+async function autoFixProject(project) { ... }
+module.exports = { autoFixProject };
+````
+
+### General behavior
+
+* Input: `project` record (already has project_type, normalized_folder_path, etc.)
+* It should:
+
+  1. Locate the normalized project folder:
+
+     * use `project.normalized_folder_path`
+     * if missing, throw a clear error
+  2. Inspect the project structure and known issues (project_type, project_validity, validation_errors).
+  3. Apply **rule-based fixes** for common problems.
+  4. Optionally (if OPENAI_API_KEY is set), use OpenAI to improve or fix certain
+     key files (see AI step below).
+  5. Re-run a lightweight validation on the normalized folder (reuse or call
+     the classifier/validation logic if possible).
+  6. Update `ready_for_deploy` based on the new state.
+  7. Build a human-readable `auto_fix_report` describing what was changed.
+
+### Rule-based fixes (no AI) – examples
+
+Implement simple, deterministic fixes based on `project_type`:
+
+---
+
+## Case A: static_web
+
+Problems to fix:
+
+* Missing `index.html` but there is an HTML file in a subfolder.
+* Dirty or deeply nested structure.
+
+Fixes:
+
+* If `index.html` is missing at root but a file like `main.html` or `home.html`
+  exists, copy/rename it to `index.html`.
+* If there is exactly one HTML file in a subfolder (e.g. `/dist/index.html`),
+  and normalization already moved it, ensure it exists at the normalized root.
+* If no HTML at all:
+
+  * create a minimal `index.html` that:
+
+    * says: "Placeholder page – deployed by AI Deploy Mentor."
+    * references the original project name.
+
+Log each fix in `auto_fix_report`.
+
+---
+
+## Case B: node_backend
+
+Typical issues:
+
+* Missing or invalid `package.json` fields.
+* Missing start script.
+* Missing entry file (`server.js` / `app.js`).
+
+Fixes:
+
+* Make sure a `package.json` exists at normalized root:
+
+  * If missing, create a minimal one:
+
+    ```json
+    {
+      "name": "<project-name>",
+      "version": "1.0.0",
+      "main": "server.js",
+      "scripts": {
+        "start": "node server.js"
+      },
+      "dependencies": {
+        "express": "^4.18.0"
+      }
+    }
+    ```
+* If `package.json` exists but has no `scripts.start`, add:
+  `"start": "node server.js"` or adjust based on detected entry file.
+* If no entry file is found but `project_type === "node_backend"`:
+
+  * Create a simple `server.js` at normalized root:
+
+    ```js
+    const express = require('express');
+    const app = express();
+    const port = process.env.PORT || 3000;
+
+    app.use(express.static('public'));
+
+    app.get('/', (req, res) => {
+      res.send('Hello from AI Deploy Mentor Node backend placeholder!');
+    });
+
+    app.listen(port, () => {
+      console.log('Server is running on port', port);
+    });
+    ```
+
+  * Log that a placeholder server was created.
+
+---
+
+## Case C: nextjs / react_spa
+
+Fixes:
+
+* Ensure `package.json` has relevant scripts:
+
+  * For nextjs:
+
+    * "dev": "next dev"
+    * "build": "next build"
+    * "start": "next start"
+  * For react_spa:
+
+    * "start": "react-scripts start" or "vite" (if Vite detected)
+    * "build": "react-scripts build" or "vite build"
+
+* If build output folders (like `build`, `dist`) are present, leave them,
+  but the auto-fix does not need to regenerate builds; it just ensures
+  the source is consistent.
+
+---
+
+## AI-based improvements (optional)
+
+After applying rule-based fixes:
+
+* If `process.env.OPENAI_API_KEY` is set:
+
+  * Create a helper inside `autoFixService.js`:
+
+    ```js
+    async function runAiSuggestionsOnKeyFiles(project, folderPath) { ... }
+    ```
+
+  * This function can:
+
+    * Identify key files (package.json, server.js, index.html).
+    * Send a compact prompt to OpenAI with:
+
+      * a short description of detected issues or goals
+      * the current content of the file
+    * Ask OpenAI to return an improved/fixed version of that specific file,
+      without changing file names or adding new dependencies aggressively.
+    * Overwrite the file with the suggested content.
+
+  * This AI step should be best-effort:
+
+    * if it fails or times out, log in report and continue without crashing.
+
+You do NOT need to fully implement complex multi-file refactors. Keep it small:
+per-file improvements only.
+
+---
+
+3. Integrate auto-fix into project flow
+
+---
+
+### Backend API
+
+Create a new route file if needed, e.g. `routes/autoFix.js`,
+or add to existing project routes.
+
+Add endpoint:
+
+### POST /api/projects/:id/auto-fix
+
+* Load project by id.
+* If no project, return 404.
+* If `normalized_folder_path` is missing, return 400 with error message.
+* Set `auto_fix_status = "running"` and save.
+* Call `autoFixProject(project)`:
+
+  * Inside it, update the DB with:
+
+    * auto_fix_status = "success" or "failed"
+    * auto_fix_report
+    * auto_fixed_at
+    * ready_for_deploy (true/false)
+* Return the updated project as JSON.
+
+### Expose auto-fix info
+
+Extend existing responses from:
+
+* `GET /api/projects`
+* `GET /api/projects/:id`
+
+to include:
+
+```json
+{
+  "auto_fix_status": "...",
+  "auto_fix_report": "...",
+  "auto_fixed_at": "...",
+  "ready_for_deploy": true/false
+}
+```
+
+Optionally add:
+
+### GET /api/projects/:id/auto-fix
+
+Returns only auto-fix related fields.
+
+---
+
+4. Frontend UI changes
+
+---
+
+In the dashboard (project cards / detail view):
+
+1. Show an **“Auto-fix”** button for projects where:
+
+   * `ready_for_deploy === false` OR
+   * `project_validity` is "warning" or "invalid".
+
+2. Clicking the button:
+
+   * Calls `POST /api/projects/:id/auto-fix`.
+   * Shows a loading spinner/toast.
+   * After completion, refreshes the project data.
+
+3. Display auto-fix status:
+
+   * "Auto-fix: none"
+   * "Auto-fix: running"
+   * "Auto-fix: success"
+   * "Auto-fix: failed"
+
+4. If `auto_fix_report` exists:
+
+   * Show it in a collapsible panel:
+
+     * Title: "Auto-fix report"
+     * Body: the human-readable log from the backend.
+
+5. If after auto-fix `ready_for_deploy === true`:
+
+   * Visually highlight that the project is now "Ready for deploy".
+   * Optionally enable a one-click “Deploy now” CTA.
+
+---
+
+5. Constraints
+
+---
+
+* Do NOT break existing flows (ZIP analyzer, classification, normalization, QA, deploy, mobile builds).
+* Auto-fix must be **safe and reversible** in spirit:
+
+  * work only inside the normalized folder
+  * never delete the original ZIP
+* Prioritize simple fixes that make the project deployable, not perfect.
+* AI integration is optional and should not be a hard dependency:
+
+  * if OPENAI_API_KEY is missing, only rule-based fixes run.
+* Log errors clearly on the server.
+
+---
+
+When finished, I should be able to:
+
+* Upload a messy project,
+* See it classified and normalized,
+* Click "Auto-fix",
+* Get a clear report of what changed,
+* And see `ready_for_deploy = true` when the project is successfully repaired.
+
+ 
+
+
