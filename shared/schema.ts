@@ -38,7 +38,9 @@ export const projects = pgTable("projects", {
   zipStoredPath: text("zip_stored_path"),
   zipAnalysisStatus: text("zip_analysis_status").default("none"),
   zipAnalysisReport: text("zip_analysis_report"),
-  projectType: text("project_type"),
+  projectType: text("project_type").default("unknown"),
+  projectValidity: text("project_validity").default("warning"),
+  validationErrors: text("validation_errors"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

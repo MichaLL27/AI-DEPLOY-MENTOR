@@ -1,0 +1,246 @@
+
+
+
+You are updating the existing backend of **AI Deploy Mentor**.
+Do NOT rebuild the entire app.  
+Your task now: Add a **Project Classifier** that automatically detects the project type.
+
+This classifier should work for:
+- ZIP uploads (after extraction)
+- GitHub projects (after cloning)
+- Replit projects (after pulling files)
+- Any project stored on disk
+
+The goal:  
+Whenever a project is created or updated, the system should automatically determine:
+- what kind of project it is
+- how it should be deployed (Render vs Vercel vs Static)
+- whether it is valid or not
+
+-------------------------------------------------------
+1. Data model changes
+-------------------------------------------------------
+
+Extend the `projects` table/model with:
+
+- `project_type`  
+  // "static_web" | "node_backend" | "nextjs" | "react_spa" | "python_flask" | "unknown"
+
+- `project_validity`  
+  // "valid" | "invalid" | "warning"
+
+- `validation_errors` (TEXT or JSON)  
+  // human-readable validation notes
+
+If these fields already exist (partially from ZIP analyzer), reuse them.
+
+Default:
+- project_type = "unknown"
+- project_validity = "warning"
+- validation_errors = null
+
+-------------------------------------------------------
+2. Create a new classifier service
+-------------------------------------------------------
+
+Create file: `services/projectClassifier.js`
+
+Export:
+
+```js
+async function classifyProject(projectFolderPath) { ... }
+module.exports = { classifyProject };
+````
+
+### Behavior of classifyProject(projectFolderPath):
+
+* Input: absolute path to folder where project files exist
+  (for ZIP: extracted folder
+  for GitHub: cloned folder
+  for Replit: pulled folder)
+
+* Steps:
+
+  1. Scan the folder recursively:
+
+     * list all filenames
+     * detect existence of:
+
+       * package.json
+       * requirements.txt
+       * index.html
+       * next.config.js
+       * server.js / app.js / main.js
+       * src/ folder
+       * public/ folder
+       * node_modules (ignore)
+       * python files (*.py)
+       * build/config files
+
+  2. Determine `project_type` using simple heuristics:
+
+     If package.json exists:
+
+     * read it (parse JSON)
+     * if dependencies include "next":
+       → project_type = "nextjs"
+     * else if dependencies include "react" and there is `src/index.js`:
+       → project_type = "react_spa"
+     * else if dependencies include "express" or common server files exist:
+       → project_type = "node_backend"
+     * else:
+       → project_type = "unknown"
+
+     If no package.json:
+
+     * if index.html exists in root or top-level directory:
+       → project_type = "static_web"
+     * else if *.py files exist AND `requirements.txt` exists:
+       → project_type = "python_flask" (or python generic)
+     * else:
+       → project_type = "unknown"
+
+  3. Validate project structure:
+
+     Cases:
+
+     * static_web:
+
+       * must contain index.html → valid
+       * if missing → invalid
+     * node_backend:
+
+       * must contain package.json + entry file (server.js/app.js) → valid
+       * else → invalid
+     * nextjs:
+
+       * must contain package.json + next.config.js or `pages`/`app` folder → valid
+     * python_flask:
+
+       * must contain requirements.txt and at least one .py → valid
+
+     Build a validation error list if something missing.
+
+  4. Decide `project_validity`:
+
+     * if errors.length === 0 → "valid"
+     * else if errors.length <= 2 → "warning"
+     * else → "invalid"
+
+  5. Return an object:
+
+     ```js
+     return {
+       project_type,
+       project_validity,
+       validation_errors: errors,
+     };
+     ```
+
+---
+
+3. Integrate classification into ZIP flow
+
+---
+
+Inside `services/zipAnalyzer.js` (or after extraction is done):
+
+* After unzipping into: `./tmp/zip-analysis/<project.id>/`
+* Call:
+
+```js
+const { project_type, project_validity, validation_errors } =
+    await classifyProject(extractedFolderPath);
+```
+
+* Save these fields into the `projects` table.
+
+---
+
+4. Integrate classification into GitHub / Replit flows (optional for now)
+
+---
+
+Wherever the system downloads a GitHub repo or Replit project folder,
+add a call to classifyProject(folderPath) with the same logic.
+
+For now, you can add TODO comments; the core feature is ZIP classification.
+
+---
+
+5. API: Expose classification results
+
+---
+
+Extend the project JSON returned by:
+
+* `GET /api/projects`
+* `GET /api/projects/:id`
+
+so it includes:
+
+```json
+{
+  "project_type": "...",
+  "project_validity": "...",
+  "validation_errors": [...]
+}
+```
+
+Also add a dedicated endpoint:
+
+### GET /api/projects/:id/classification
+
+Returns:
+
+```json
+{
+  "project_type": "...",
+  "project_validity": "...",
+  "validation_errors": [...]
+}
+```
+
+---
+
+6. Frontend UI
+
+---
+
+In the project list and detail view:
+
+* Show a badge for project_type:
+
+  * static web → green
+  * node backend → blue
+  * nextjs → purple
+  * react spa → cyan
+  * python → yellow
+  * unknown → gray
+
+* Show project_validity:
+
+  * valid → “✓ Ready”
+  * warning → “⚠️ Needs review”
+  * invalid → “❌ Cannot deploy”
+
+* Add collapsible panel “Project Structure” that shows validation_errors.
+
+---
+
+7. Constraints
+
+---
+
+* Do NOT break existing features (QA, deployments, mobile builds).
+* Keep the classifier isolated inside `services/projectClassifier.js`.
+* Must support multiple project types gracefully.
+* Must not crash if ZIP contains weird or unexpected folders.
+* Handle errors cleanly and set project_validity = "invalid" on failure.
+
+```
+
+---
+
+
+

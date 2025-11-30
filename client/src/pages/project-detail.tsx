@@ -11,6 +11,8 @@ import { StatusTimeline } from "@/components/status-timeline";
 import { ProjectDetailSkeleton } from "@/components/project-skeleton";
 import { AndroidBadge } from "@/components/android-badge";
 import { IosBadge } from "@/components/ios-badge";
+import { ProjectTypeBadge } from "@/components/project-type-badge";
+import { ValidityBadge } from "@/components/validity-badge";
 import {
   ArrowLeft,
   PlayCircle,
@@ -26,6 +28,7 @@ import {
   Smartphone,
   Download,
   Apple,
+  ChevronDown,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -34,6 +37,7 @@ export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
+  const [expandValidation, setExpandValidation] = useState(false);
 
   const { data: project, isLoading, error } = useQuery<Project>({
     queryKey: ["/api/projects", id],
@@ -304,16 +308,59 @@ export default function ProjectDetail() {
       <div className="mb-8">
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4">
-            <CardTitle className="text-base font-medium">Deployment Progress</CardTitle>
-            {isDeployed && (
-              <div className="flex items-center gap-2">
-                <AndroidBadge status={project.mobileAndroidStatus} />
-                <IosBadge status={project.mobileIosStatus} />
+            <CardTitle className="text-base font-medium">Project Status</CardTitle>
+            <div className="flex items-center gap-2">
+              <ProjectTypeBadge type={project.projectType} />
+              <ValidityBadge validity={project.projectValidity} />
+              {isDeployed && (
+                <>
+                  <AndroidBadge status={project.mobileAndroidStatus} />
+                  <IosBadge status={project.mobileIosStatus} />
+                </>
+              )}
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <StatusTimeline currentStatus={project.status} />
+            
+            {project.validationErrors && (
+              <div className="border-t pt-4">
+                <button
+                  onClick={() => setExpandValidation(!expandValidation)}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="button-toggle-validation"
+                >
+                  <ChevronDown 
+                    className={`h-4 w-4 transition-transform ${expandValidation ? 'rotate-180' : ''}`}
+                  />
+                  Project Structure
+                </button>
+                
+                {expandValidation && (
+                  <div className="mt-3 text-sm space-y-2">
+                    {typeof project.validationErrors === "string" ? (
+                      <div className="text-muted-foreground">
+                        {JSON.parse(project.validationErrors).map((error: string, i: number) => (
+                          <div key={i} className="flex gap-2">
+                            <span>•</span>
+                            <span>{error}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="text-muted-foreground">
+                        {Array.isArray(project.validationErrors) && project.validationErrors.map((error: string, i: number) => (
+                          <div key={i} className="flex gap-2">
+                            <span>•</span>
+                            <span>{error}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             )}
-          </CardHeader>
-          <CardContent>
-            <StatusTimeline currentStatus={project.status} />
           </CardContent>
         </Card>
       </div>

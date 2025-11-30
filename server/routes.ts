@@ -7,6 +7,7 @@ import { deployProject } from "./services/deployService";
 import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { generateIosWrapper } from "./services/mobileIosService";
 import { analyzeZipProject } from "./services/zipAnalyzer";
+import { classifyProject } from "./services/projectClassifier";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import multer from "multer";
@@ -349,14 +350,17 @@ export async function registerRoutes(
         updatedProject = await storage.updateProject(project.id, {
           zipAnalysisStatus: "success",
           projectType: analysis.projectType,
+          projectValidity: analysis.projectValidity,
+          validationErrors: JSON.stringify(analysis.validationErrors),
           zipAnalysisReport: analysis.analysisReport,
         });
 
-        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType}`);
+        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (${analysis.projectValidity})`);
       } catch (error) {
         console.error(`[ZIP] Analysis failed for ${project.id}:`, error);
         updatedProject = await storage.updateProject(project.id, {
           zipAnalysisStatus: "failed",
+          projectValidity: "invalid",
           zipAnalysisReport: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         });
       }
@@ -386,6 +390,31 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching ZIP analysis:", error);
       res.status(500).json({ error: "Failed to fetch ZIP analysis" });
+    }
+  });
+
+  // GET /api/projects/:id/classification - Get project classification
+  app.get("/api/projects/:id/classification", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      const validationErrors = project.validationErrors 
+        ? JSON.parse(project.validationErrors)
+        : [];
+
+      res.json({
+        projectType: project.projectType || "unknown",
+        projectValidity: project.projectValidity || "warning",
+        validationErrors,
+      });
+    } catch (error) {
+      console.error("Error fetching classification:", error);
+      res.status(500).json({ error: "Failed to fetch classification" });
     }
   });
 

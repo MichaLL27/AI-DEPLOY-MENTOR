@@ -2,12 +2,15 @@ import * as fs from "fs";
 import * as path from "path";
 import AdmZip from "adm-zip";
 import type { Project } from "@shared/schema";
+import { classifyProject } from "./projectClassifier";
 
 /**
  * Analyze an uploaded ZIP project to detect type and structure
  */
 export async function analyzeZipProject(project: Project): Promise<{
   projectType: string;
+  projectValidity: string;
+  validationErrors: string[];
   analysisReport: string;
 }> {
   if (project.sourceType !== "zip" || !project.zipStoredPath) {
@@ -107,11 +110,16 @@ Files Found:
       report += "Manual configuration required";
     }
 
+    // Run full classification on extracted folder
+    const classification = await classifyProject(extractDir);
+
     // Cleanup temp extraction
     fs.rmSync(extractDir, { recursive: true, force: true });
 
     return {
-      projectType,
+      projectType: classification.projectType,
+      projectValidity: classification.projectValidity,
+      validationErrors: classification.validationErrors,
       analysisReport: report,
     };
   } catch (error) {
