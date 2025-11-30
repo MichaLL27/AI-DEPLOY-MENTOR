@@ -19,8 +19,11 @@ export async function analyzeZipProject(project: Project): Promise<{
   normalizedReport: string;
   readyForDeploy: boolean;
 }> {
-  if (project.sourceType !== "zip" || !project.zipStoredPath) {
-    throw new Error("Project must be ZIP type with stored path");
+  console.log(`[ZipAnalyzer] Analyzing project ${project.id}. Type: ${project.sourceType}, Path: ${project.zipStoredPath}`);
+
+  // Validate source type and path
+  if ((project.sourceType !== "zip" && project.sourceType !== "github") || !project.zipStoredPath) {
+    throw new Error(`Project must be ZIP type with stored path. Got type: ${project.sourceType}, path: ${project.zipStoredPath}`);
   }
 
   if (!fs.existsSync(project.zipStoredPath)) {

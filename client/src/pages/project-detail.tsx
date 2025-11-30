@@ -46,6 +46,8 @@ import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+import { EnvVarsPanel } from "@/components/env-vars-panel";
+
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
   const { toast } = useToast();
@@ -668,6 +670,10 @@ export default function ProjectDetail() {
           <MonitoringPanel project={project} />
         </div>
       )}
+
+      <div className="mb-8">
+        <EnvVarsPanel projectId={id!} />
+      </div>
 
       {prs && prs.length > 0 && (
         <div className="mb-8">

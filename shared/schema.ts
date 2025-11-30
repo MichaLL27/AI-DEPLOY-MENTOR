@@ -49,6 +49,7 @@ export const projects = pgTable("projects", {
   autoFixStatus: text("auto_fix_status").default("none"),
   autoFixReport: text("auto_fix_report"),
   autoFixedAt: timestamp("auto_fixed_at"),
+  envVars: json("env_vars").default({}),
   lastPrNumber: integer("last_pr_number").default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

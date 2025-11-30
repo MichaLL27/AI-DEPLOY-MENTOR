@@ -113,7 +113,8 @@ async function normalizeNodeBackend(
   dest: string,
   actions: string[]
 ): Promise<void> {
-  const packageJsonPath = findFile(source, "package.json");
+  // Find package.json that has express or is near server.js
+  const packageJsonPath = findPackageJsonWithDependency(source, "express") || findFile(source, "package.json");
 
   if (packageJsonPath) {
     const parentDir = path.dirname(packageJsonPath);
@@ -150,7 +151,8 @@ async function normalizeReactProject(
   actions: string[],
   projectType: string
 ): Promise<void> {
-  const packageJsonPath = findFile(source, "package.json");
+  // Find package.json that has react/next
+  const packageJsonPath = findPackageJsonWithDependency(source, projectType === "nextjs" ? "next" : "react") || findFile(source, "package.json");
 
   if (packageJsonPath) {
     const parentDir = path.dirname(packageJsonPath);
@@ -172,6 +174,42 @@ async function normalizeReactProject(
   }
 
   actions.push("Ensured src and public folders are in normalized root.");
+}
+
+/**
+ * Find a package.json that contains a specific dependency
+ */
+function findPackageJsonWithDependency(dir: string, dependency: string): string | null {
+  try {
+    const items = fs.readdirSync(dir);
+    
+    // Check current directory first
+    if (items.includes("package.json")) {
+      const pkgPath = path.join(dir, "package.json");
+      try {
+        const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+        const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+        if (dependency in deps) {
+          return pkgPath;
+        }
+      } catch (e) {
+        // Ignore invalid package.json
+      }
+    }
+
+    // Recurse into subdirectories
+    for (const item of items) {
+      const itemPath = path.join(dir, item);
+      const stat = fs.statSync(itemPath);
+      if (stat.isDirectory() && !["node_modules", ".git", "dist", "build"].includes(item)) {
+        const found = findPackageJsonWithDependency(itemPath, dependency);
+        if (found) return found;
+      }
+    }
+  } catch (e) {
+    // Ignore
+  }
+  return null;
 }
 
 /**

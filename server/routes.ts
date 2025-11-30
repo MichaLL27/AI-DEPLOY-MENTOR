@@ -25,6 +25,8 @@ import * as os from "os";
 
 import { cloneAndZipRepository } from "./services/githubService";
 
+import { autoFixEnvVars, detectEnvVars } from "./services/envService";
+
 // Configure multer for ZIP uploads
 // On Vercel, we must use /tmp. On local, we can use uploads/
 const isVercel = process.env.VERCEL === "1";
@@ -204,10 +206,38 @@ export async function registerRoutes(
       }
 
       // Only allow QA on registered or failed projects
-      if (!["registered", "qa_failed"].includes(project.status)) {
+      if (!["registered", "qa_failed", "qa_passed"].includes(project.status)) {
         return res.status(400).json({ 
           error: `Cannot run QA on project with status: ${project.status}` 
         });
+      }
+
+      // FORCE RE-ANALYSIS to ensure we have the correct project type
+      // This fixes the issue where a project was misclassified before a logic fix
+      if (project.sourceType === "zip" || project.sourceType === "github") {
+         console.log(`[QA] Re-analyzing project ${id} to ensure correct classification...`);
+         try {
+            const analysis = await analyzeZipProject(project);
+            
+            // Update project with new analysis results
+            const updated = await storage.updateProject(id, {
+              projectType: analysis.projectType,
+              projectValidity: analysis.projectValidity,
+              validationErrors: JSON.stringify(analysis.validationErrors),
+              normalizedStatus: analysis.normalizedStatus,
+              normalizedFolderPath: analysis.normalizedFolderPath,
+              normalizedReport: analysis.normalizedReport,
+              readyForDeploy: analysis.readyForDeploy ? "true" : "false",
+              zipAnalysisReport: analysis.analysisReport,
+            } as any);
+            
+            if (updated) {
+              project = updated;
+            }
+         } catch (err) {
+            console.error("[QA] Re-analysis failed:", err);
+            // We continue, but warn
+         }
       }
 
       // Auto-fix if not already done or if it failed previously
@@ -774,6 +804,47 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error listing files:", error);
       res.status(500).json({ error: "Failed to list files" });
+    }
+  });
+
+  // GET /api/projects/:id/env - Get env vars
+  app.get("/api/projects/:id/env", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      res.json(project.envVars || {});
+    } catch (error) {
+      res.status(500).json({ error: "Failed to fetch env vars" });
+    }
+  });
+
+  // POST /api/projects/:id/env - Update env vars
+  app.post("/api/projects/:id/env", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const envVars = req.body; // Expecting Record<string, EnvVar>
+      
+      await storage.updateProject(id, { envVars });
+      res.json({ success: true });
+    } catch (error) {
+      res.status(500).json({ error: "Failed to update env vars" });
+    }
+  });
+
+  // POST /api/projects/:id/env/autofix - Auto-fix env vars
+  app.post("/api/projects/:id/env/autofix", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      const fixedVars = await autoFixEnvVars(project);
+      res.json(fixedVars);
+    } catch (error) {
+      console.error("Env autofix error:", error);
+      res.status(500).json({ error: "Failed to auto-fix env vars" });
     }
   });
 

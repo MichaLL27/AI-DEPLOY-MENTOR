@@ -5,10 +5,15 @@ import * as net from "net";
 import * as path from "path";
 import * as fs from "fs";
 
+import { cloneAndZipRepository } from "./githubService";
+import { analyzeZipProject } from "./zipAnalyzer";
+import { deployToVercel } from "./vercelService";
+
 /**
  * Deploy Service - Handles project deployments
  * 
  * Supports:
+ * - Vercel API deployments (when VERCEL_TOKEN is set)
  * - Real Render API deployments (when RENDER_API_TOKEN and renderServiceId are set)
  * - Local Process Deployment (Real execution on local machine)
  */
@@ -64,6 +69,50 @@ async function logDeploy(projectId: string, message: string) {
 }
 
 /**
+ * Restore project source if missing (for GitHub projects)
+ */
+async function restoreProjectSource(project: Project): Promise<Project | null> {
+  if (project.sourceType !== "github" || !project.sourceValue) {
+    return null;
+  }
+
+  await logDeploy(project.id, "Project source missing. Attempting to restore from GitHub...");
+  
+  try {
+    const zipPath = await cloneAndZipRepository(project.sourceValue, project.id);
+    
+    // Update project with ZIP path
+    let updatedProject = await storage.updateProject(project.id, {
+      zipStoredPath: zipPath,
+      zipOriginalFilename: "github-source.zip",
+      zipAnalysisStatus: "pending",
+    } as any);
+
+    // Analyze the imported project
+    const analysis = await analyzeZipProject(updatedProject!);
+    
+    updatedProject = await storage.updateProject(project.id, {
+      zipAnalysisStatus: "success",
+      projectType: analysis.projectType,
+      projectValidity: analysis.projectValidity,
+      validationErrors: JSON.stringify(analysis.validationErrors),
+      normalizedStatus: analysis.normalizedStatus,
+      normalizedFolderPath: analysis.normalizedFolderPath,
+      normalizedReport: analysis.normalizedReport,
+      readyForDeploy: analysis.readyForDeploy ? "true" : "false",
+      zipAnalysisReport: analysis.analysisReport,
+    } as any);
+
+    await logDeploy(project.id, "Project source restored successfully.");
+    return updatedProject;
+
+  } catch (error) {
+    await logDeploy(project.id, `Failed to restore project source: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
  * Deploy project locally by running it as a child process
  */
 async function deployToLocal(project: Project): Promise<DeployResult> {
@@ -88,10 +137,20 @@ async function deployToLocal(project: Project): Promise<DeployResult> {
     await logDeploy(project.id, `Allocated local port: ${port}`);
 
     const cwd = project.normalizedFolderPath;
+
+    // Prepare Env Vars for local execution
+    const projectEnv = (project.envVars as Record<string, any>) || {};
+    const envVars = Object.entries(projectEnv).reduce((acc, [key, val]) => {
+      acc[key] = val.value;
+      return acc;
+    }, {} as Record<string, string>);
+
+    // Merge with process.env
+    const childEnv = { ...process.env, ...envVars };
     
     // 1. Install dependencies (if not already done)
     await logDeploy(project.id, "Installing dependencies...");
-    const install = spawn("npm", ["install"], { cwd, shell: true });
+    const install = spawn("npm", ["install"], { cwd, shell: true, env: childEnv });
     
     await new Promise<void>((resolve, reject) => {
       install.stdout.on("data", (data) => logDeploy(project.id, `[Install] ${data}`));
@@ -106,7 +165,8 @@ async function deployToLocal(project: Project): Promise<DeployResult> {
     const pkg = JSON.parse(fs.readFileSync(path.join(cwd, "package.json"), "utf-8"));
     if (pkg.scripts?.build) {
       await logDeploy(project.id, "Building project...");
-      const build = spawn("npm", ["run", "build"], { cwd, shell: true });
+      // Inject env vars into build process so VITE_ vars are picked up
+      const build = spawn("npm", ["run", "build"], { cwd, shell: true, env: childEnv });
       
       await new Promise<void>((resolve, reject) => {
         build.stdout.on("data", (data) => logDeploy(project.id, `[Build] ${data}`));
@@ -122,11 +182,48 @@ async function deployToLocal(project: Project): Promise<DeployResult> {
     await logDeploy(project.id, "Starting application...");
     
     // Set PORT env var
-    const env = { ...process.env, PORT: port.toString() };
+    const env = { ...childEnv, PORT: port.toString() };
     
     let startCmd = "";
     
-    if (pkg.scripts?.start) {
+    // Special handling for Angular projects
+    if (fs.existsSync(path.join(cwd, "angular.json"))) {
+      await logDeploy(project.id, "Angular project detected. Locating build output...");
+      
+      // Try to find the dist folder
+      const distPath = path.join(cwd, "dist");
+      if (fs.existsSync(distPath)) {
+        // Find the specific project folder inside dist
+        const contents = fs.readdirSync(distPath);
+        // Look for a folder that contains index.html or 'browser' folder
+        let buildDir = distPath;
+        
+        // If dist has subfolders, check them
+        for (const item of contents) {
+          const itemPath = path.join(distPath, item);
+          if (fs.statSync(itemPath).isDirectory()) {
+            // Check for browser folder (Angular 17+)
+            if (fs.existsSync(path.join(itemPath, "browser", "index.html"))) {
+              buildDir = path.join(itemPath, "browser");
+              break;
+            }
+            // Check for index.html directly
+            if (fs.existsSync(path.join(itemPath, "index.html"))) {
+              buildDir = itemPath;
+              break;
+            }
+          }
+        }
+        
+        await logDeploy(project.id, `Serving static files from: ${buildDir}`);
+        // Use serve to host the static files
+        // -s for single page app (rewrites to index.html)
+        startCmd = `npx serve -s "${buildDir}" -p ${port}`;
+      } else {
+        await logDeploy(project.id, "Build output (dist) not found. Falling back to npm start...");
+        startCmd = "npm start";
+      }
+    } else if (pkg.scripts?.start) {
       startCmd = "npm start";
     } else if (fs.existsSync(path.join(cwd, "server.js"))) {
       startCmd = "node server.js";
@@ -205,7 +302,7 @@ async function handleCrash(projectId: string) {
       
       // Wait 5 seconds then restart
       setTimeout(async () => {
-        await deployToLocal(project);
+        await deployProject(project);
       }, 5000);
     }
   } catch (e) {
@@ -449,7 +546,8 @@ async function provisionDatabase(project: Project): Promise<Array<{ key: string;
  */
 export async function deployProject(project: Project): Promise<DeployResult> {
   // Validate project is ready for deployment
-  if (!["qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
+  // (Note: We relax the check slightly to allow recovery if source is missing but status was 'deployed' previously)
+  if (!["qa_passed", "deployed", "deploy_failed", "recovery_triggered"].includes(project.status)) {
     return {
       success: false,
       deployedUrl: null,
@@ -461,7 +559,54 @@ export async function deployProject(project: Project): Promise<DeployResult> {
   await storage.updateProject(project.id, { deployLogs: "" });
   await logDeploy(project.id, "Starting deployment process...");
 
-  // 1. If no Render Service ID, try to create one
+  // 0. Check and Restore Source if needed
+  if (!project.normalizedFolderPath || !fs.existsSync(project.normalizedFolderPath)) {
+    if (project.sourceType === "github") {
+      const restored = await restoreProjectSource(project);
+      if (restored) {
+        project = restored;
+      } else {
+        return {
+          success: false,
+          deployedUrl: null,
+          error: "Project source not found and failed to restore from GitHub",
+        };
+      }
+    } else {
+       // For ZIP uploads, we can't restore if the file is gone
+       return {
+          success: false,
+          deployedUrl: null,
+          error: "Project source not found (ZIP file missing)",
+        };
+    }
+  }
+
+  // 1. Try Vercel Deployment (if configured)
+  if (process.env.VERCEL_TOKEN) {
+    await logDeploy(project.id, "VERCEL_TOKEN detected. Attempting Vercel deployment...");
+    const vercelResult = await deployToVercel(project);
+    
+    if (vercelResult.success) {
+      await logDeploy(project.id, `Vercel deployment initiated! URL: ${vercelResult.url}`);
+      return {
+        success: true,
+        deployedUrl: vercelResult.url || null,
+        deployId: vercelResult.deployId,
+        deployStatus: vercelResult.status,
+      };
+    } else {
+      // STRICT MODE: If Vercel is configured, we DO NOT fall back to local.
+      await logDeploy(project.id, `Vercel deployment failed: ${vercelResult.error}. Aborting (Vercel-only mode).`);
+      return {
+        success: false,
+        deployedUrl: null,
+        error: `Vercel Deployment Failed: ${vercelResult.error}`
+      };
+    }
+  }
+
+  // 2. If no Render Service ID, try to create one
   if (!project.renderServiceId && process.env.RENDER_API_TOKEN) {
     const newService = await createRenderService(project);
     if (newService) {
@@ -488,8 +633,14 @@ export async function deployProject(project: Project): Promise<DeployResult> {
   }
 
   // Fallback: Local Process Deployment (Real execution)
-  await logDeploy(project.id, "No Render configuration found. Starting local deployment (Real-time)...");
-  return await deployToLocal(project);
+  // await logDeploy(project.id, "No Render configuration found. Starting local deployment (Real-time execution)...");
+  // return await deployToLocal(project);
+  
+  return {
+      success: false,
+      deployedUrl: null,
+      error: "Deployment failed: No valid cloud deployment configuration found (Vercel/Render) or deployment failed."
+  };
 }
 
 /**
