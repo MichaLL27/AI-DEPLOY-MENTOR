@@ -591,7 +591,7 @@ export async function registerRoutes(
         // Update PR status in DB
         const updatedPr = await db
           .update(pullRequests)
-          .set({ status: "merged" })
+          .set({ status: "merged" } as any)
           .where(eq(pullRequests.id, prId))
           .returning()
           .then(rows => rows[0]);
@@ -613,7 +613,7 @@ export async function registerRoutes(
       const { prId } = req.params;
       const updatedPr = await db
         .update(pullRequests)
-        .set({ status: "closed" })
+        .set({ status: "closed" } as any)
         .where(eq(pullRequests.id, prId))
         .returning()
         .then(rows => rows[0]);

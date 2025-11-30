@@ -37,7 +37,7 @@ export class DatabaseStorage implements IStorage {
         renderServiceId: insertProject.renderServiceId ?? null,
         renderDashboardUrl: insertProject.renderDashboardUrl ?? null,
         status: "registered",
-      })
+      } as any)
       .returning();
     return result[0];
   }
@@ -49,7 +49,7 @@ export class DatabaseStorage implements IStorage {
       .set({
         ...safeUpdates,
         updatedAt: new Date(),
-      })
+      } as any)
       .where(eq(projects.id, id))
       .returning();
     return result[0];
