@@ -266,7 +266,7 @@ export default function ProjectDetail() {
   }
 
   const canRunQa = project.status === "registered" || project.status === "qa_failed";
-  const canDeploy = project.status === "qa_passed";
+  const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed";
   const isDeployed = project.status === "deployed";
   const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
@@ -391,7 +391,7 @@ export default function ProjectDetail() {
                 ) : (
                   <Rocket className="h-4 w-4 mr-2" />
                 )}
-                Deploy Now
+                {project.status === "deployed" ? "Redeploy" : "Deploy Now"}
               </Button>
             )}
             {isDeployed && project.deployedUrl && (

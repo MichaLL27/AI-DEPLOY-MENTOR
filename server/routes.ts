@@ -263,7 +263,7 @@ export async function registerRoutes(
       }
 
       // Only allow deployment on qa_passed projects
-      if (project.status !== "qa_passed") {
+      if (!["qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
         return res.status(400).json({ 
           error: "Project must pass QA before deployment" 
         });

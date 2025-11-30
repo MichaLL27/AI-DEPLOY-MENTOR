@@ -449,7 +449,7 @@ async function provisionDatabase(project: Project): Promise<Array<{ key: string;
  */
 export async function deployProject(project: Project): Promise<DeployResult> {
   // Validate project is ready for deployment
-  if (project.status !== "qa_passed") {
+  if (!["qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
     return {
       success: false,
       deployedUrl: null,
