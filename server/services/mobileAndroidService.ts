@@ -2,7 +2,6 @@ import * as fs from "fs";
 import * as path from "path";
 import archiver from "archiver";
 import type { Project } from "@shared/schema";
-import type { Archive } from "archiver";
 
 /**
  * Generate a minimal Android Studio project with WebView wrapper

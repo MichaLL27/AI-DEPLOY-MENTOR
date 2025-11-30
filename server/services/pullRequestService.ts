@@ -60,7 +60,8 @@ export async function mergePullRequest(
   copyDirContents(pr.patchFolderPath, normalizedFolderPath);
 
   // Handle removed files
-  for (const diff of pr.diffJson) {
+  const diffs = pr.diffJson as FileDiff[];
+  for (const diff of diffs) {
     if (diff.change === "removed") {
       const filePath = path.join(normalizedFolderPath, diff.file);
       try {

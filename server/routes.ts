@@ -363,11 +363,11 @@ export async function registerRoutes(
         zipOriginalFilename: req.file.originalname,
         zipStoredPath: storedPath,
         zipAnalysisStatus: "pending",
-      });
+      } as any);
 
       try {
         // Analyze ZIP
-        const analysis = await analyzeZipProject(updatedProject);
+        const analysis = await analyzeZipProject(updatedProject!);
         updatedProject = await storage.updateProject(project.id, {
           zipAnalysisStatus: "success",
           projectType: analysis.projectType,
@@ -378,7 +378,7 @@ export async function registerRoutes(
           normalizedReport: analysis.normalizedReport,
           readyForDeploy: analysis.readyForDeploy ? "true" : "false",
           zipAnalysisReport: analysis.analysisReport,
-        });
+        } as any);
 
         console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (ready: ${analysis.readyForDeploy})`);
       } catch (error) {
@@ -388,7 +388,7 @@ export async function registerRoutes(
           projectValidity: "invalid",
           normalizedStatus: "failed",
           zipAnalysisReport: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
-        });
+        } as any);
       }
 
       res.status(201).json(updatedProject);

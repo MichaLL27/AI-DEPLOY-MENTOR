@@ -34,8 +34,8 @@ export class DatabaseStorage implements IStorage {
         name: insertProject.name,
         sourceType: insertProject.sourceType,
         sourceValue: insertProject.sourceValue,
-        renderServiceId: insertProject.renderServiceId || null,
-        renderDashboardUrl: insertProject.renderDashboardUrl || null,
+        renderServiceId: insertProject.renderServiceId ?? null,
+        renderDashboardUrl: insertProject.renderDashboardUrl ?? null,
         status: "registered",
       })
       .returning();
@@ -43,10 +43,11 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateProject(id: string, updates: Partial<Project>): Promise<Project | undefined> {
+    const { updatedAt, ...safeUpdates } = updates;
     const result = await db
       .update(projects)
       .set({
-        ...updates,
+        ...safeUpdates,
         updatedAt: new Date(),
       })
       .where(eq(projects.id, id))

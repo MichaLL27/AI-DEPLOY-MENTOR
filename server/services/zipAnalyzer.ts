@@ -133,7 +133,11 @@ Files Found:
     const normalization = await normalizeProjectStructure(mockProject as Project, extractDir);
 
     // Cleanup temp extraction
-    fs.rmSync(extractDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(extractDir, { recursive: true, force: true });
+    } catch (e) {
+      // Ignore cleanup errors
+    }
 
     return {
       projectType: classification.projectType,
