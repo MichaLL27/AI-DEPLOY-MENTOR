@@ -519,25 +519,28 @@ export default function ProjectDetail() {
                 
                 {expandValidation && (
                   <div className="p-3 pt-0 text-sm space-y-2 border-t bg-muted/20">
-                    {typeof project.validationErrors === "string" ? (
-                      <div className="text-muted-foreground mt-2">
-                        {JSON.parse(project.validationErrors).map((error: string, i: number) => (
+                    <div className="text-muted-foreground mt-2">
+                      {(() => {
+                        let errors: string[] = [];
+                        try {
+                          const raw = project.validationErrors;
+                          if (Array.isArray(raw)) {
+                            errors = raw;
+                          } else if (typeof raw === "string") {
+                            errors = JSON.parse(raw);
+                          }
+                        } catch (e) {
+                          // ignore parsing errors
+                        }
+                        
+                        return Array.isArray(errors) ? errors.map((error: string, i: number) => (
                           <div key={i} className="flex gap-2 items-start">
                             <span className="text-red-500 mt-1">•</span>
                             <span>{error}</span>
                           </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <div className="text-muted-foreground mt-2">
-                        {Array.isArray(project.validationErrors) && project.validationErrors.map((error: string, i: number) => (
-                          <div key={i} className="flex gap-2 items-start">
-                            <span className="text-red-500 mt-1">•</span>
-                            <span>{error}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                        )) : null;
+                      })()}
+                    </div>
                   </div>
                 )}
               </div>

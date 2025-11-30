@@ -76,13 +76,7 @@ export interface FileDiff {
 
 export type PullRequest = typeof pullRequests.$inferSelect;
 
-export const insertProjectSchema = createInsertSchema(projects).pick({
-  name: true,
-  sourceType: true,
-  sourceValue: true,
-  renderServiceId: true,
-  renderDashboardUrl: true,
-}).extend({
+export const insertProjectSchema = z.object({
   name: z.string().min(1, "Project name is required").max(100, "Name too long"),
   sourceType: z.enum(sourceTypeValues),
   sourceValue: z.string().min(1, "Source URL or path is required"),
