@@ -72,7 +72,8 @@ const setupApp = async () => {
     const message = err.message || "Internal Server Error";
 
     res.status(status).json({ message });
-    throw err;
+    // Do not throw err here, as it causes Vercel to report FUNCTION_INVOCATION_FAILED
+    // throw err;
   });
 
   // importantly only setup vite in development and after
