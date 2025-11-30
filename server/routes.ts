@@ -199,7 +199,7 @@ export async function registerRoutes(
   app.post("/api/projects/:id/run-qa", async (req, res) => {
     try {
       const { id } = req.params;
-      const project = await storage.getProject(id);
+      let project = await storage.getProject(id);
       
       if (!project) {
         return res.status(404).json({ error: "Project not found" });
