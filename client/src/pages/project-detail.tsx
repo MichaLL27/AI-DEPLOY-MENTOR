@@ -10,6 +10,7 @@ import { SourceIcon } from "@/components/source-icon";
 import { StatusTimeline } from "@/components/status-timeline";
 import { ProjectDetailSkeleton } from "@/components/project-skeleton";
 import { AndroidBadge } from "@/components/android-badge";
+import { IosBadge } from "@/components/ios-badge";
 import {
   ArrowLeft,
   PlayCircle,
@@ -24,6 +25,7 @@ import {
   Link as LinkIcon,
   Smartphone,
   Download,
+  Apple,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -106,6 +108,29 @@ export default function ProjectDetail() {
     },
   });
 
+  const generateIosMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("POST", `/api/mobile-ios/${id}/generate`);
+      return response.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      toast({
+        title: "iOS project generated",
+        description: "Your Xcode project is ready for download.",
+      });
+    },
+    onError: (error: Error) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "iOS generation failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const copyToClipboard = async (text: string) => {
     await navigator.clipboard.writeText(text);
     setCopied(true);
@@ -150,6 +175,8 @@ export default function ProjectDetail() {
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
   const canGenerateAndroid = isDeployed && project.deployedUrl;
   const isGeneratingAndroid = generateAndroidMutation.isPending || project.mobileAndroidStatus === "building";
+  const canGenerateIos = isDeployed && project.deployedUrl;
+  const isGeneratingIos = generateIosMutation.isPending || project.mobileIosStatus === "building";
 
   return (
     <div className="container max-w-5xl mx-auto py-8 px-4">
@@ -245,16 +272,44 @@ export default function ProjectDetail() {
                 </a>
               </Button>
             )}
+
+            {canGenerateIos && project.mobileIosStatus !== "ready" && (
+              <Button
+                onClick={() => generateIosMutation.mutate()}
+                disabled={isGeneratingIos}
+                variant="outline"
+                data-testid="button-generate-ios"
+              >
+                {isGeneratingIos ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Apple className="h-4 w-4 mr-2" />
+                )}
+                Generate iOS App
+              </Button>
+            )}
+
+            {project.mobileIosStatus === "ready" && project.mobileIosDownloadUrl && (
+              <Button asChild data-testid="button-download-ios">
+                <a href={project.mobileIosDownloadUrl} download>
+                  <Download className="h-4 w-4 mr-2" />
+                  Download iOS Project
+                </a>
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
       <div className="mb-8">
         <Card>
-          <CardHeader className="pb-3 flex flex-row items-center justify-between">
+          <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4">
             <CardTitle className="text-base font-medium">Deployment Progress</CardTitle>
             {isDeployed && (
-              <AndroidBadge status={project.mobileAndroidStatus} />
+              <div className="flex items-center gap-2">
+                <AndroidBadge status={project.mobileAndroidStatus} />
+                <IosBadge status={project.mobileIosStatus} />
+              </div>
             )}
           </CardHeader>
           <CardContent>

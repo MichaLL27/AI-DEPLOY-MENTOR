@@ -5,6 +5,7 @@ import { insertProjectSchema } from "@shared/schema";
 import { runQaOnProject } from "./services/qaService";
 import { deployProject } from "./services/deployService";
 import { generateAndroidWrapper } from "./services/mobileAndroidService";
+import { generateIosWrapper } from "./services/mobileIosService";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 
@@ -232,6 +233,61 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching Android status:", error);
       res.status(500).json({ error: "Failed to fetch Android status" });
+    }
+  });
+
+  // POST /api/mobile-ios/:projectId/generate - Generate iOS wrapper
+  app.post("/api/mobile-ios/:projectId/generate", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const project = await storage.getProject(projectId);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!project.deployedUrl) {
+        return res.status(400).json({ error: "Project must be deployed before generating iOS wrapper" });
+      }
+
+      // Update status to building
+      await storage.updateProject(projectId, { mobileIosStatus: "building" });
+
+      try {
+        const result = await generateIosWrapper(project);
+        const updatedProject = await storage.updateProject(projectId, {
+          mobileIosStatus: result.status,
+          mobileIosDownloadUrl: result.downloadPath,
+        });
+        res.json(updatedProject);
+      } catch (error) {
+        console.error("iOS generation error:", error);
+        await storage.updateProject(projectId, { mobileIosStatus: "failed" });
+        return res.status(500).json({ error: `Failed to generate iOS wrapper: ${error instanceof Error ? error.message : "Unknown error"}` });
+      }
+    } catch (error) {
+      console.error("Error in iOS generation route:", error);
+      res.status(500).json({ error: "Failed to generate iOS wrapper" });
+    }
+  });
+
+  // GET /api/mobile-ios/:projectId/status - Get iOS status
+  app.get("/api/mobile-ios/:projectId/status", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const project = await storage.getProject(projectId);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        mobileIosStatus: project.mobileIosStatus,
+        mobileIosDownloadUrl: project.mobileIosDownloadUrl,
+      });
+    } catch (error) {
+      console.error("Error fetching iOS status:", error);
+      res.status(500).json({ error: "Failed to fetch iOS status" });
     }
   });
 

@@ -218,3 +218,55 @@ After building:
 4. Users can now install your web app as a native Android app
 
 For detailed Android Studio documentation, visit: https://developer.android.com/studio
+
+## iOS Wrapper Generation
+
+AI Deploy Mentor can generate a minimal Xcode project that wraps your deployed web app in a WKWebView.
+
+### How it works
+
+1. Deploy your project to get a live URL
+2. Click **"Generate iOS App"** on the project detail page
+3. The app generates an Xcode project structure
+4. Download the ZIP file containing the iOS project
+5. Open it in Xcode on a Mac
+6. Configure your Apple Developer account and signing
+7. Build and upload to App Store Connect / TestFlight
+
+### Generated iOS Project Structure
+
+The generated project includes:
+
+- Complete Xcode project with Swift source files
+- WKWebView configured to load your deployed URL
+- AppDelegate and SceneDelegate for app lifecycle
+- Info.plist with proper configuration
+- Main.storyboard for UI layout
+- Support for iOS 13.0 and later
+
+### Customization Steps
+
+1. **Change Bundle Identifier**: Update in Xcode project settings
+2. **Add App Icon**: Replace in Assets.xcassets
+3. **Configure Code Signing**: Set your development team
+4. **Customize Display Name**: Edit Info.plist
+5. **Test on Device/Simulator**: Build and run in Xcode
+
+The WKWebView:
+- Supports JavaScript for full web functionality
+- Allows inline media playback
+- Loads your deployed URL on app launch
+
+### App Store Submission
+
+After customization:
+
+1. Select "Generic iOS Device" as the target
+2. Product → Archive
+3. Distribute App → App Store Connect
+4. Upload to TestFlight or App Store
+5. Users can install your web app as a native iOS app
+
+**Note**: You must have an Apple Developer account and code signing certificates configured.
+
+For detailed Xcode documentation, visit: https://developer.apple.com/xcode/

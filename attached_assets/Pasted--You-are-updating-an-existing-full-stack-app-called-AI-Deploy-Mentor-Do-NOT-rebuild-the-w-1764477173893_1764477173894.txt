@@ -1,0 +1,234 @@
+
+
+
+You are updating an existing full-stack app called **AI Deploy Mentor**.
+Do NOT rebuild the whole app – keep the current UI, routes and database.
+
+Now add a new feature: **generate an iOS wrapper project** for any project
+that already has a `deployedUrl`.
+
+The iOS wrapper is a minimal Xcode project with a WKWebView that loads
+the project's `deployedUrl`.
+
+-------------------------------------------------------
+1. Data model changes
+-------------------------------------------------------
+
+In the `projects` table / model, make sure we have these OPTIONAL fields
+for iOS:
+
+- mobile_ios_status         // "none" | "building" | "ready" | "failed"
+- mobile_ios_download_url   // string | null
+
+If these fields do not exist yet, add them.
+
+Update:
+- the SQL schema / migrations
+- any JS/TS types for the Project model
+- any JSON serialization used in API responses
+
+Default values:
+- mobile_ios_status = "none"
+- mobile_ios_download_url = null
+
+-------------------------------------------------------
+2. Backend: iOS build service
+-------------------------------------------------------
+
+Create a new module: `services/mobileIosService.js`
+
+Export a function:
+
+```js
+async function generateIosWrapper(project) { ... }
+module.exports = { generateIosWrapper };
+````
+
+Behavior of `generateIosWrapper(project)`:
+
+* If `!project.deployedUrl`, throw an error.
+* Use `fs` and `path` to:
+
+  1. Create a temporary folder, for example:
+     `./tmp/ios-builds/<project.id>/`
+
+  2. Inside it, generate a **minimal Xcode iOS project** that can be opened
+     in Xcode by the user.
+
+     Use Swift + WKWebView (preferred). Suggested structure:
+
+     * `ios/AIWrapper.xcodeproj`
+     * `ios/AIWrapper/Info.plist`
+     * `ios/AIWrapper/AppDelegate.swift` (if you choose UIKit lifecycle)
+     * `ios/AIWrapper/SceneDelegate.swift` (optional, if using scenes)
+     * `ios/AIWrapper/ViewController.swift`
+     * `ios/AIWrapper/Base.lproj/Main.storyboard` OR a SwiftUI-based App.
+
+     You may choose either:
+
+     * UIKit with storyboard + ViewController + WKWebView, or
+     * SwiftUI with a single View embedding WKWebView.
+
+     The important part is:
+
+     * Bundle identifier can be generated like `com.aideploy.<project.id>`
+       (just as a placeholder; the user will change it later in Xcode).
+     * The initial view should show a full-screen WKWebView that loads
+       `project.deployedUrl`.
+
+     Example WKWebView (pseudocode in Swift):
+
+     ```swift
+     import UIKit
+     import WebKit
+
+     class ViewController: UIViewController {
+         var webView: WKWebView!
+
+         override func viewDidLoad() {
+             super.viewDidLoad()
+             webView = WKWebView(frame: view.bounds)
+             webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+             view.addSubview(webView)
+
+             if let url = URL(string: "<PROJECT_URL>") {
+                 webView.load(URLRequest(url: url))
+             }
+         }
+     }
+     ```
+
+     Replace `<PROJECT_URL>` with `project.deployedUrl` when writing the file.
+
+  3. After generating all required files, zip the `ios/` folder into a single
+     ZIP file, for example:
+     `./public/mobile-builds/ios-project-<project.id>.zip`
+
+     Use a Node zip library (like `archiver`) if not already present.
+
+  4. Return an object like:
+
+     ```js
+     return {
+       status: "ready",
+       downloadPath: "/mobile-builds/ios-project-" + project.id + ".zip"
+     };
+     ```
+
+Make sure Express serves static files from `./public`, so that
+`/mobile-builds/...` is downloadable via HTTP.
+
+If any error occurs, throw it so the caller can set status `"failed"` and log
+the error.
+
+---
+
+3. Backend API routes for iOS
+
+---
+
+Create a new route file: `routes/mobileIos.js` and mount it under `/api/mobile-ios`
+in the main server (e.g. in `index.js` or wherever routes are registered).
+
+Add these endpoints:
+
+### POST /api/mobile-ios/:projectId/generate
+
+* Load the project by `projectId`.
+* If project not found or `project.deployedUrl` is missing:
+
+  * return 400 JSON error with a clear message.
+* Set `mobile_ios_status = "building"` and save.
+* Call `generateIosWrapper(project)`.
+* On success:
+
+  * set `mobile_ios_status = "ready"`
+  * set `mobile_ios_download_url = result.downloadPath`
+* On error:
+
+  * set `mobile_ios_status = "failed"`
+* Return the updated project as JSON.
+
+### GET /api/mobile-ios/:projectId/status
+
+* Return only the iOS-related fields:
+
+  ```json
+  {
+    "mobile_ios_status": "...",
+    "mobile_ios_download_url": "..."
+  }
+  ```
+
+---
+
+4. Frontend UI changes for iOS
+
+---
+
+In the project list / project detail UI (React or whatever frontend you have):
+
+1. For projects with `status === "deployed"`:
+
+   * Add a button: **"Generate iOS App"**.
+   * When clicked:
+
+     * Call `POST /api/mobile-ios/:projectId/generate`.
+     * Show a loading state (spinner / toast).
+     * After the call, start polling the status endpoint.
+
+2. Add an iOS status indicator on each project card or in the project details:
+
+   * If `mobile_ios_status === "none"` → show "iOS: Not generated".
+   * If `"building"` → show "iOS: Building…".
+   * If `"ready"` → show "iOS: Ready".
+   * If `"failed"` → show "iOS: Failed".
+
+3. If `mobile_ios_status === "ready"` and `mobile_ios_download_url` is not null:
+
+   * Show a **"Download iOS Project"** button.
+   * Clicking it should open `mobile_ios_download_url` in a new tab,
+     which downloads the ZIP file.
+
+---
+
+5. README update
+
+---
+
+Update `README.md` with a new section:
+
+**iOS wrapper**
+
+Explain:
+
+* The app can generate an iOS Xcode project that wraps the deployed URL
+  in a WKWebView.
+* The user flow:
+
+  1. Deploy the project so it has a valid `deployedUrl`.
+  2. Click “Generate iOS App”.
+  3. Download the generated ZIP.
+  4. Unzip and open the project in Xcode on a Mac.
+  5. Change the Bundle Identifier and configure their own Apple Developer account.
+  6. Build and upload the app to App Store Connect / TestFlight.
+
+Clarify that:
+
+* This feature does NOT handle Apple code signing or automatic App Store
+  submission. It only generates a ready-to-open Xcode project wrapper.
+
+---
+
+6. Constraints
+
+---
+
+* Do NOT break any existing QA or deploy features.
+* If file system or zip operations fail, log the error and set
+  `mobile_ios_status = "failed"`, but keep the server running.
+* Keep the implementation simple and maintainable. This is an MVP wrapper
+  generator, not a fully automated App Store pipeline.
+
+ 
+ 

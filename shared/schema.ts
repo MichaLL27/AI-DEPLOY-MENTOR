@@ -32,6 +32,8 @@ export const projects = pgTable("projects", {
   lastDeployStatus: text("last_deploy_status"),
   mobileAndroidStatus: text("mobile_android_status").default("none"),
   mobileAndroidDownloadUrl: text("mobile_android_download_url"),
+  mobileIosStatus: text("mobile_ios_status").default("none"),
+  mobileIosDownloadUrl: text("mobile_ios_download_url"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
