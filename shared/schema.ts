@@ -1,4 +1,7 @@
+import { pgTable, text, varchar, timestamp } from "drizzle-orm/pg-core";
+import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
+import { sql } from "drizzle-orm";
 
 export const projectStatusValues = [
   "registered",
@@ -15,30 +18,27 @@ export type ProjectStatus = (typeof projectStatusValues)[number];
 export const sourceTypeValues = ["github", "replit", "zip", "other"] as const;
 export type SourceType = (typeof sourceTypeValues)[number];
 
-export interface Project {
-  id: string;
-  name: string;
-  sourceType: SourceType;
-  sourceValue: string;
-  status: ProjectStatus;
-  qaReport: string | null;
-  deployedUrl: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
+export const projects = pgTable("projects", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  sourceType: text("source_type").notNull().$type<SourceType>(),
+  sourceValue: text("source_value").notNull(),
+  status: text("status").notNull().default("registered").$type<ProjectStatus>(),
+  qaReport: text("qa_report"),
+  deployedUrl: text("deployed_url"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
 
-export const insertProjectSchema = z.object({
+export const insertProjectSchema = createInsertSchema(projects).pick({
+  name: true,
+  sourceType: true,
+  sourceValue: true,
+}).extend({
   name: z.string().min(1, "Project name is required").max(100, "Name too long"),
   sourceType: z.enum(sourceTypeValues),
   sourceValue: z.string().min(1, "Source URL or path is required"),
 });
 
 export type InsertProject = z.infer<typeof insertProjectSchema>;
-
-export const users = {} as any;
-export const insertUserSchema = z.object({
-  username: z.string(),
-  password: z.string(),
-});
-export type InsertUser = z.infer<typeof insertUserSchema>;
-export type User = { id: string; username: string; password: string };
+export type Project = typeof projects.$inferSelect;
