@@ -6,7 +6,7 @@ A modern deployment management platform that helps transform AI-generated or low
 
 AI Deploy Mentor provides a streamlined workflow for:
 1. Registering projects from various sources (GitHub, Replit, ZIP files)
-2. Running automated QA checks
+2. Running AI-powered QA checks using OpenAI GPT-5
 3. Deploying projects to production with one click
 
 ## Architecture
@@ -19,7 +19,8 @@ AI Deploy Mentor provides a streamlined workflow for:
 
 ### Backend (Express + TypeScript)
 - **Server**: Express.js with TypeScript
-- **Storage**: In-memory storage (MemStorage) for MVP
+- **Database**: PostgreSQL (Neon-backed) with Drizzle ORM
+- **AI Integration**: OpenAI GPT-5 via Replit AI Integrations
 - **Services**: Modular service architecture for QA and deployment
 
 ## Key Files
@@ -38,12 +39,28 @@ AI Deploy Mentor provides a streamlined workflow for:
 
 ### Backend
 - `server/routes.ts` - API route handlers
-- `server/storage.ts` - In-memory project storage
-- `server/services/qaService.ts` - QA simulation logic
-- `server/services/deployService.ts` - Deployment simulation logic
+- `server/storage.ts` - PostgreSQL database storage with Drizzle ORM
+- `server/services/qaService.ts` - AI-powered QA using OpenAI GPT-5
+- `server/services/deployService.ts` - Deployment simulation (ready for Vercel/Render API integration)
 
 ### Shared
-- `shared/schema.ts` - TypeScript types and Zod schemas
+- `shared/schema.ts` - Drizzle schema definitions, TypeScript types, and Zod schemas
+
+## Database Schema
+
+```sql
+projects (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR NOT NULL,
+  source_type VARCHAR NOT NULL,  -- 'github', 'replit', 'zip', 'other'
+  source_value VARCHAR NOT NULL,
+  status VARCHAR NOT NULL DEFAULT 'registered',
+  qa_report TEXT,
+  deployed_url VARCHAR,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+)
+```
 
 ## API Endpoints
 
@@ -52,8 +69,8 @@ AI Deploy Mentor provides a streamlined workflow for:
 | GET | `/api/projects` | List all projects |
 | GET | `/api/projects/:id` | Get project by ID |
 | POST | `/api/projects` | Create new project |
-| POST | `/api/projects/:id/run-qa` | Run QA checks |
-| POST | `/api/projects/:id/deploy` | Deploy project |
+| POST | `/api/projects/:id/run-qa` | Run AI-powered QA checks (~15-20s) |
+| POST | `/api/projects/:id/deploy` | Deploy project (simulated) |
 | DELETE | `/api/projects/:id` | Delete project |
 
 ## Project Status Flow
@@ -63,6 +80,22 @@ registered → qa_running → qa_passed → deploying → deployed
                 ↓                         ↓
             qa_failed               deploy_failed
 ```
+
+## AI-Powered QA
+
+The QA service uses OpenAI GPT-5 (via Replit AI Integrations) to analyze projects:
+- Analyzes source URL format and accessibility
+- Identifies project type and technology stack
+- Detects potential security issues
+- Provides deployment recommendations
+- Generates structured report with PASS/FAIL verdict
+
+QA reports include:
+1. Project Overview
+2. Source Analysis
+3. Potential Issues & Recommendations
+4. Security Considerations
+5. Summary & Verdict
 
 ## Design Guidelines
 
@@ -74,12 +107,23 @@ The application follows a Linear/Vercel-inspired developer tool aesthetic:
 - Dark mode support
 - Responsive design for mobile and desktop
 
+## Environment Variables
+
+Required (automatically configured by Replit):
+- `DATABASE_URL` - PostgreSQL connection string
+- `AI_INTEGRATIONS_OPENAI_API_KEY` - OpenAI API key (via Replit AI Integrations)
+- `AI_INTEGRATIONS_OPENAI_BASE_URL` - OpenAI base URL
+
+Optional (for real deployments):
+- `VERCEL_TOKEN` - Vercel API access token
+- `RENDER_API_KEY` - Render API key
+
 ## Future Integrations
 
 The service architecture is designed for easy integration with:
-- **OpenAI API**: For AI-powered QA analysis (qaService.ts)
-- **Vercel API**: For frontend deployments (deployService.ts)
-- **Render API**: For backend services (deployService.ts)
+- **Vercel API**: For frontend deployments (deployService.ts ready for integration)
+- **Render API**: For backend services (deployService.ts ready for integration)
+- **Webhook callbacks**: For deployment status notifications
 
 ## Running the Application
 
@@ -87,4 +131,9 @@ The application runs on port 5000 with both frontend and backend served from the
 
 ```bash
 npm run dev
+```
+
+Database migrations:
+```bash
+npm run db:push
 ```
