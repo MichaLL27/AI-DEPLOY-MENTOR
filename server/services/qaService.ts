@@ -47,7 +47,7 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
       localTestReport += await runLocalTests(project.normalizedFolderPath);
     }
 
-    const report = await pRetry(
+    let report = await pRetry(
       async () => {
         // Using GPT-4o for best balance of code analysis capability and speed
         const response = await openai.chat.completions.create({
