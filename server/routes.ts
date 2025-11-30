@@ -1,6 +1,7 @@
 import type { Express } from "express";
 import { createServer, type Server } from "http";
 import { storage } from "./storage";
+import { db } from "./db";
 import { insertProjectSchema } from "@shared/schema";
 import { runQaOnProject } from "./services/qaService";
 import { deployProject } from "./services/deployService";
@@ -525,7 +526,7 @@ export async function registerRoutes(
   app.get("/api/projects/:projectId/prs", async (req, res) => {
     try {
       const { projectId } = req.params;
-      const prs = await storage.db
+      const prs = await db
         .select()
         .from(pullRequests)
         .where(eq(pullRequests.projectId, projectId));
@@ -541,7 +542,7 @@ export async function registerRoutes(
   app.get("/api/prs/:prId", async (req, res) => {
     try {
       const { prId } = req.params;
-      const pr = await storage.db
+      const pr = await db
         .select()
         .from(pullRequests)
         .where(eq(pullRequests.id, prId))
@@ -562,7 +563,7 @@ export async function registerRoutes(
   app.post("/api/prs/:prId/merge", async (req, res) => {
     try {
       const { prId } = req.params;
-      const pr = await storage.db
+      const pr = await db
         .select()
         .from(pullRequests)
         .where(eq(pullRequests.id, prId))
@@ -581,7 +582,7 @@ export async function registerRoutes(
         await mergePullRequest(pr as any, project.normalizedFolderPath || "");
         
         // Update PR status in DB
-        const updatedPr = await storage.db
+        const updatedPr = await db
           .update(pullRequests)
           .set({ status: "merged" })
           .where(eq(pullRequests.id, prId))
@@ -603,7 +604,7 @@ export async function registerRoutes(
   app.post("/api/prs/:prId/close", async (req, res) => {
     try {
       const { prId } = req.params;
-      const updatedPr = await storage.db
+      const updatedPr = await db
         .update(pullRequests)
         .set({ status: "closed" })
         .where(eq(pullRequests.id, prId))
