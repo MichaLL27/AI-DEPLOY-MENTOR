@@ -6,12 +6,12 @@ import { rm, readFile } from "fs/promises";
 // which helps cold start times
 const allowlist = [
   "@google/generative-ai",
-  // "@neondatabase/serverless", // Don't bundle, let Vercel resolve it
+  "@neondatabase/serverless",
   "axios",
   "connect-pg-simple",
   "cors",
   "date-fns",
-  // "drizzle-orm", // Don't bundle, let Vercel resolve it
+  "drizzle-orm",
   "drizzle-zod",
   "express",
   "express-rate-limit",
