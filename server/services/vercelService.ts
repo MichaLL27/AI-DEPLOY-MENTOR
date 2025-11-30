@@ -1,5 +1,8 @@
 import type { Project } from "@shared/schema";
 import type { EnvVar } from "./envService";
+import * as fs from "fs";
+import * as path from "path";
+import * as crypto from "crypto";
 
 export interface VercelDeployResult {
   success: boolean;
@@ -38,10 +41,20 @@ async function getGithubRepoId(owner: string, repo: string): Promise<string | nu
 async function ensureVercelProject(
   name: string, 
   envVars: any[], 
-  repoInfo: { type: string, repo: string, repoId: number | string }, 
-  token: string
+  token: string,
+  repoInfo?: { type: string, repo: string, repoId: number | string }
 ) {
   console.log(`[Vercel] Ensuring project '${name}' exists and has env vars...`);
+  
+  const body: any = {
+    name,
+    environmentVariables: envVars,
+    framework: null
+  };
+
+  if (repoInfo) {
+    body.gitRepository = repoInfo;
+  }
   
   // 1. Try to create project
   const createRes = await fetch("https://api.vercel.com/v9/projects", {
@@ -50,12 +63,7 @@ async function ensureVercelProject(
       "Authorization": `Bearer ${token}`,
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({
-      name,
-      environmentVariables: envVars,
-      framework: null,
-      gitRepository: repoInfo
-    })
+    body: JSON.stringify(body)
   });
 
   if (createRes.ok) {
@@ -93,14 +101,149 @@ async function ensureVercelProject(
   return null;
 }
 
+async function deployZipToVercel(project: Project, token: string, envVars: any[]): Promise<VercelDeployResult> {
+  if (!project.normalizedFolderPath || !fs.existsSync(project.normalizedFolderPath)) {
+    return { success: false, error: "Project source files not found (normalized folder missing)" };
+  }
+
+  const sanitizedName = project.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/--+/g, '-').slice(0, 100);
+
+  // Ensure project exists (without git repo)
+  await ensureVercelProject(sanitizedName, envVars, token);
+
+  // 1. Collect files and calculate hashes
+  const files: { file: string; sha: string; size: number; path: string }[] = [];
+  
+  function walk(dir: string, root: string) {
+    const items = fs.readdirSync(dir);
+    for (const item of items) {
+      const fullPath = path.join(dir, item);
+      const stat = fs.statSync(fullPath);
+      
+      if (stat.isDirectory()) {
+        if (item !== "node_modules" && item !== ".git") {
+          walk(fullPath, root);
+        }
+      } else {
+        const content = fs.readFileSync(fullPath);
+        const sha = crypto.createHash('sha1').update(content).digest('hex');
+        const relPath = path.relative(root, fullPath).replace(/\\/g, '/');
+        
+        files.push({
+          file: relPath,
+          sha,
+          size: stat.size,
+          path: fullPath
+        });
+      }
+    }
+  }
+
+  walk(project.normalizedFolderPath, project.normalizedFolderPath);
+  console.log(`[Vercel] Prepared ${files.length} files for upload.`);
+
+  // 2. Create Deployment (Check for missing files)
+  const deployBody = {
+    name: sanitizedName,
+    files: files.map(f => ({ file: f.file, sha: f.sha, size: f.size })),
+    projectSettings: { framework: null }
+  };
+
+  let deployRes = await fetch("https://api.vercel.com/v13/deployments", {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(deployBody),
+  });
+
+  // 3. Handle missing files
+  if (deployRes.status === 400) { // Often returns 400 or specific error for missing files? No, usually returns error object
+     // Actually Vercel API returns 200 OK but with error code inside if files are missing?
+     // Or maybe it returns 400 Bad Request?
+     // Documentation says: "If any of the files are not already uploaded... the response will contain error code missing_files"
+  }
+  
+  let deployData = await deployRes.json();
+
+  if (deployData.error && deployData.error.code === 'missing_files') {
+    console.log(`[Vercel] Uploading ${deployData.error.missing.length} missing files...`);
+    
+    const missingShas = new Set(deployData.error.missing);
+    const filesToUpload = files.filter(f => missingShas.has(f.sha));
+
+    for (const file of filesToUpload) {
+      const content = fs.readFileSync(file.path);
+      await fetch("https://api.vercel.com/v2/files", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+          "Content-Type": "application/octet-stream",
+          "x-vercel-digest": file.sha,
+          "x-vercel-size": file.size.toString()
+        },
+        body: content
+      });
+    }
+
+    console.log("[Vercel] Missing files uploaded. Retrying deployment...");
+    
+    // Retry deployment
+    deployRes = await fetch("https://api.vercel.com/v13/deployments", {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(deployBody),
+    });
+    
+    deployData = await deployRes.json();
+  }
+
+  if (!deployRes.ok || deployData.error) {
+    const err = deployData.error ? JSON.stringify(deployData.error) : await deployRes.text();
+    console.error(`[Vercel] Deployment failed: ${err}`);
+    return { success: false, error: `Vercel API Error: ${err}` };
+  }
+
+  const ownerName = deployData.owner?.username || 'team';
+  const projectName = deployData.name || deployBody.name;
+
+  return {
+    success: true,
+    url: `https://${deployData.url}`,
+    dashboardUrl: `https://vercel.com/${ownerName}/${projectName}/deployments/${deployData.id}`,
+    deployId: deployData.id,
+    status: deployData.readyState
+  };
+}
+
 export async function deployToVercel(project: Project): Promise<VercelDeployResult> {
   const token = process.env.VERCEL_TOKEN;
   if (!token) {
     return { success: false, error: "VERCEL_TOKEN not configured" };
   }
 
+  // Prepare Env Vars
+  const envVars = (project.envVars as Record<string, EnvVar>) || {};
+  console.log(`[Vercel] Preparing env vars for deployment. Keys: ${Object.keys(envVars).join(", ")}`);
+
+  const vercelEnv = Object.values(envVars).map(v => ({
+    key: v.key,
+    value: v.value,
+    type: v.isSecret ? "encrypted" : "plain",
+    target: ["production", "preview", "development"]
+  }));
+
+  // Handle ZIP Deployment
+  if (project.sourceType === "zip") {
+    return deployZipToVercel(project, token, vercelEnv);
+  }
+
   if (project.sourceType !== "github" || !project.sourceValue) {
-    return { success: false, error: "Only GitHub projects are supported for Vercel deployment currently" };
+    return { success: false, error: "Only GitHub and ZIP projects are supported for Vercel deployment currently" };
   }
 
   try {
@@ -124,17 +267,6 @@ export async function deployToVercel(project: Project): Promise<VercelDeployResu
       };
     }
 
-    // Prepare Env Vars
-    const envVars = (project.envVars as Record<string, EnvVar>) || {};
-    console.log(`[Vercel] Preparing env vars for deployment. Keys: ${Object.keys(envVars).join(", ")}`);
-
-    const vercelEnv = Object.values(envVars).map(v => ({
-      key: v.key,
-      value: v.value,
-      type: v.isSecret ? "encrypted" : "plain",
-      target: ["production", "preview", "development"]
-    }));
-
     // Sanitize Project Name
     const sanitizedName = project.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/--+/g, '-').slice(0, 100);
 
@@ -142,8 +274,8 @@ export async function deployToVercel(project: Project): Promise<VercelDeployResu
     await ensureVercelProject(
       sanitizedName, 
       vercelEnv, 
-      { type: "github", repo: fullRepo, repoId }, 
-      token
+      token,
+      { type: "github", repo: fullRepo, repoId }
     );
 
     // Prepare deployment payload
