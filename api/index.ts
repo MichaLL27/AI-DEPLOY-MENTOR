@@ -1,8 +1,7 @@
+import { app, setupApp } from "../server/index";
+
 export default async function handler(req: any, res: any) {
   try {
-    // Dynamic import to catch top-level errors in server modules
-    const { app, setupApp } = await import("../server/index");
-    
     await setupApp();
     app(req, res);
   } catch (e) {

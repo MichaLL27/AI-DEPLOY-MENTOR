@@ -30,8 +30,19 @@ const uploadDir = isVercel
   ? path.join(os.tmpdir(), "uploads") 
   : path.join(process.cwd(), "uploads");
 
+// Use memory storage on Vercel to avoid permission issues with default disk storage
+const storageConfig = isVercel ? multer.memoryStorage() : multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+
 const upload = multer({
-  dest: uploadDir,
+  storage: storageConfig,
   fileFilter: (_req: any, file: any, cb: any) => {
     if (file.mimetype === "application/zip" || file.mimetype === "application/x-zip-compressed" || file.originalname.endsWith(".zip")) {
       cb(null, true);
@@ -46,11 +57,13 @@ export async function registerRoutes(
   httpServer: Server,
   app: Express
 ): Promise<Server> {
-  // Ensure upload directory exists
-  try {
-    fs.mkdirSync(uploadDir, { recursive: true });
-  } catch (err) {
-    console.error("Failed to create upload directory:", err);
+  // Ensure upload directory exists (only needed for local disk storage)
+  if (!isVercel) {
+    try {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    } catch (err) {
+      console.error("Failed to create upload directory:", err);
+    }
   }
   
   // GET /api/projects - List all projects
@@ -345,15 +358,25 @@ export async function registerRoutes(
       }
 
       const projectName = (req.body.name as string) || req.file.originalname.replace(".zip", "");
-      const uploadedPath = req.file.path;
-
+      
       // Create organized storage path
       const projectId = require("crypto").randomUUID().substring(0, 12);
-      const storedDir = path.join(process.cwd(), "uploads", "projects", projectId);
+      const storedDir = isVercel 
+        ? path.join(os.tmpdir(), "uploads", "projects", projectId)
+        : path.join(process.cwd(), "uploads", "projects", projectId);
+        
       fs.mkdirSync(storedDir, { recursive: true });
 
       const storedPath = path.join(storedDir, "source.zip");
-      fs.renameSync(uploadedPath, storedPath);
+      
+      // Handle file saving based on storage type
+      if (req.file.buffer) {
+        // Memory storage (Vercel)
+        fs.writeFileSync(storedPath, req.file.buffer);
+      } else {
+        // Disk storage (Local)
+        fs.renameSync(req.file.path, storedPath);
+      }
 
       // Create project record
       const project = await storage.createProject({
