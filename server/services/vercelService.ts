@@ -183,7 +183,7 @@ async function deployZipToVercel(project: Project, token: string, envVars: any[]
           "x-vercel-digest": file.sha,
           "x-vercel-size": file.size.toString()
         },
-        body: content
+        body: content as any
       });
     }
 
