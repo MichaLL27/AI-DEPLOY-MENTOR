@@ -75,6 +75,91 @@ async function triggerRenderDeploy(project: Project): Promise<{ deployId: string
 }
 
 /**
+ * Create a new Web Service on Render
+ */
+async function createRenderService(project: Project): Promise<{ serviceId: string; url: string; dashboardUrl: string } | null> {
+  const renderToken = process.env.RENDER_API_TOKEN;
+  if (!renderToken) return null;
+
+  // We can only deploy public GitHub repos for now
+  if (project.sourceType !== "github") {
+    console.log("[Render] Skipping service creation: Not a GitHub project");
+    return null;
+  }
+
+  try {
+    const baseUrl = process.env.RENDER_BASE_URL || "https://api.render.com/v1";
+    
+    // 1. Provision Database if needed (Mock for now)
+    const dbEnvVars = await provisionDatabase(project);
+
+    // 2. Create Service
+    const body = {
+      serviceDetails: {
+        type: "web_service",
+        name: project.name,
+        repo: project.sourceValue, // Must be https://github.com/user/repo
+        env: "node",
+        region: "oregon", // Default
+        buildCommand: "npm install && npm run build",
+        startCommand: "npm start",
+        envVars: [
+          ...dbEnvVars,
+          { key: "NODE_ENV", value: "production" }
+        ]
+      }
+    };
+
+    console.log(`[Render] Creating new service for ${project.name}...`);
+
+    const response = await fetch(`${baseUrl}/services`, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${renderToken}`,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error(`[Render] Create service failed: ${errorText}`);
+      return null;
+    }
+
+    const data = await response.json() as any;
+    return {
+      serviceId: data.id,
+      url: data.serviceDetails.url,
+      dashboardUrl: data.dashboardUrl || `https://dashboard.render.com/d/${data.id}`,
+    };
+
+  } catch (error) {
+    console.error("[Render] Create service error:", error);
+    return null;
+  }
+}
+
+/**
+ * Mock Database Provisioning
+ * In a real app, this would call Neon API
+ */
+async function provisionDatabase(project: Project): Promise<Array<{ key: string; value: string }>> {
+  // Check if project needs DB (simple heuristic)
+  // This would ideally come from the analysis phase
+  const needsDb = project.projectType === "node_backend" || project.projectType === "nextjs";
+  
+  if (!needsDb) return [];
+
+  console.log("[Deploy] Project might need a database. Provisioning logic would go here.");
+  
+  // If we had a NEON_API_KEY, we would create a DB here.
+  // For now, we return a placeholder or nothing.
+  return [];
+}
+
+/**
  * Deploy a project to production
  * 
  * @param project - The project to deploy
@@ -91,6 +176,21 @@ export async function deployProject(project: Project): Promise<DeployResult> {
       deployedUrl: null,
       error: "Project must pass QA before deployment",
     };
+  }
+
+  // 1. If no Render Service ID, try to create one
+  if (!project.renderServiceId && process.env.RENDER_API_TOKEN) {
+    const newService = await createRenderService(project);
+    if (newService) {
+      await storage.updateProject(project.id, {
+        renderServiceId: newService.serviceId,
+        renderDashboardUrl: newService.dashboardUrl,
+        deployedUrl: newService.url,
+      });
+      // Refresh project object
+      const updated = await storage.getProject(project.id);
+      if (updated) project = updated;
+    }
   }
 
   // Try real Render deployment if configured

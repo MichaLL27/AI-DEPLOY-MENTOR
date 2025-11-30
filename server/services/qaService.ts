@@ -1,13 +1,20 @@
 import type { Project } from "@shared/schema";
 import OpenAI from "openai";
 import pRetry, { AbortError } from "p-retry";
+import * as fs from "fs";
+import * as path from "path";
+import { exec } from "child_process";
+import * as util from "util";
 
-// This is using Replit's AI Integrations service, which provides OpenAI-compatible API access
-// without requiring your own OpenAI API key. Charges are billed to your Replit credits.
-// Initialize lazily or with a dummy key to prevent startup crash if env vars are missing
-const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY || "dummy-key-for-init";
+const execAsync = util.promisify(exec);
+
+// Initialize OpenAI with the provided API key
+const apiKey = process.env.OPENAI_API_KEY;
+if (!apiKey) {
+  console.warn("OPENAI_API_KEY is not set. QA features will fail.");
+}
+
 const openai = new OpenAI({
-  baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
   apiKey: apiKey,
 });
 
@@ -32,6 +39,12 @@ function isRateLimitError(error: any): boolean {
  */
 export async function runQaOnProject(project: Project): Promise<QaResult> {
   try {
+    // 1. Run local tests if available
+    let localTestReport = "";
+    if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
+      localTestReport = await runLocalTests(project.normalizedFolderPath);
+    }
+
     const report = await pRetry(
       async () => {
         // Using GPT-4o for best balance of code analysis capability and speed
@@ -45,9 +58,10 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
 Be thorough but concise. Provide actionable insights. Format your response as a structured QA report with sections for:
 1. Project Overview
 2. Source Analysis
-3. Potential Issues & Recommendations
-4. Security Considerations
-5. Summary & Verdict
+3. Local Test Results (if available)
+4. Potential Issues & Recommendations
+5. Security Considerations
+6. Summary & Verdict
 
 Always end with a clear PASS or FAIL verdict based on your analysis.`
             },
@@ -59,6 +73,9 @@ Project Name: ${project.name}
 Source Type: ${project.sourceType}
 Source URL: ${project.sourceValue}
 Registration Date: ${project.createdAt}
+
+Local Test Execution Results:
+${localTestReport || "No local tests executed (project not normalized or no tests found)."}
 
 Based on the source type and URL, analyze:
 1. Is the source URL properly formatted and accessible?
@@ -120,4 +137,60 @@ ${error instanceof Error ? error.message : "Unknown error occurred"}
 Please try again later or check your project configuration.`,
     };
   }
+}
+
+async function runLocalTests(folderPath: string): Promise<string> {
+  const packageJsonPath = path.join(folderPath, "package.json");
+  if (!fs.existsSync(packageJsonPath)) {
+    return "No package.json found. Skipping local tests.";
+  }
+
+  let report = "Local Test Execution:\n";
+  
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    const scripts = pkg.scripts || {};
+
+    // Run Lint
+    if (scripts.lint) {
+      report += "\n[Running Lint]\n";
+      try {
+        const { stdout, stderr } = await execAsync("npm run lint", { cwd: folderPath, timeout: 30000 });
+        report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
+      } catch (e: any) {
+        report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+      }
+    } else {
+      report += "\n[Lint] No lint script found.\n";
+    }
+
+    // Run Tests
+    if (scripts.test) {
+      report += "\n[Running Tests]\n";
+      try {
+        const { stdout, stderr } = await execAsync("npm test", { cwd: folderPath, timeout: 60000 });
+        report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
+      } catch (e: any) {
+        report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+      }
+    } else {
+      report += "\n[Tests] No test script found.\n";
+    }
+
+    // Check for build
+    if (scripts.build) {
+      report += "\n[Running Build Check]\n";
+      try {
+        const { stdout, stderr } = await execAsync("npm run build", { cwd: folderPath, timeout: 120000 });
+        report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
+      } catch (e: any) {
+        report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+      }
+    }
+
+  } catch (error) {
+    report += `\nError running local tests: ${error instanceof Error ? error.message : String(error)}\n`;
+  }
+
+  return report;
 }

@@ -3,6 +3,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { serveStatic } from "./static";
 import { createServer } from "http";
+import { startMonitoringService } from "./services/monitoringService";
 
 const app = express();
 const httpServer = createServer(app);
@@ -66,6 +67,11 @@ const setupApp = async () => {
   if (isSetup) return;
 
   await registerRoutes(httpServer, app);
+
+  // Start background monitoring service
+  if (process.env.NODE_ENV !== "test") {
+    startMonitoringService().catch(err => console.error("Failed to start monitoring service:", err));
+  }
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     const status = err.status || err.statusCode || 500;
