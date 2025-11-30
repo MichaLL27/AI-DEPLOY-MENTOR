@@ -60,7 +60,11 @@ app.use((req, res, next) => {
   next();
 });
 
+let isSetup = false;
+
 const setupApp = async () => {
+  if (isSetup) return;
+
   await registerRoutes(httpServer, app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
@@ -84,6 +88,8 @@ const setupApp = async () => {
     const { setupVite } = await import("./vite");
     await setupVite(httpServer, app);
   }
+  
+  isSetup = true;
 };
 
 export { app, setupApp, httpServer };

@@ -1,13 +1,9 @@
-import { app, setupApp } from "../server/index";
-
-let ready = false;
-
 export default async function handler(req: any, res: any) {
   try {
-    if (!ready) {
-      await setupApp();
-      ready = true;
-    }
+    // Dynamic import to catch top-level errors in server modules
+    const { app, setupApp } = await import("../server/index");
+    
+    await setupApp();
     app(req, res);
   } catch (e) {
     console.error("Server initialization failed:", e);
