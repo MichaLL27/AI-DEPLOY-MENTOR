@@ -6,7 +6,10 @@ if (!process.env.DATABASE_URL) {
   console.warn("DATABASE_URL environment variable is missing. Database connection will fail.");
 }
 
-const connectionString = process.env.DATABASE_URL || "postgres://placeholder:placeholder@localhost:5432/placeholder";
+const rawConnectionString = process.env.DATABASE_URL || "postgres://placeholder:placeholder@localhost:5432/placeholder";
+
+// Remove sslmode=require if present, as neon-http uses HTTPS automatically
+const connectionString = rawConnectionString.replace("?sslmode=require", "");
 
 console.log(`[DB] Initializing neon-http client with ${process.env.DATABASE_URL ? "provided URL" : "placeholder URL"}`);
 

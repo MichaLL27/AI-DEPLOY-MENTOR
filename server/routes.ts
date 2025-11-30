@@ -74,7 +74,9 @@ export async function registerRoutes(
   // GET /api/projects - List all projects
   app.get("/api/projects", async (req, res) => {
     try {
+      console.log("Fetching projects...");
       const projects = await storage.getAllProjects();
+      console.log(`Fetched ${projects.length} projects`);
       const enriched = projects.map(p => ({
         ...p,
         autoReadyMessage: getAutoReadyMessage(p),
@@ -82,7 +84,8 @@ export async function registerRoutes(
       res.json(enriched);
     } catch (error) {
       console.error("Error fetching projects:", error);
-      res.status(500).json({ error: "Failed to fetch projects" });
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      res.status(500).json({ error: "Failed to fetch projects", details: errorMessage });
     }
   });
 
