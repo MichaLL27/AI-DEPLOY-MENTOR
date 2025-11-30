@@ -23,6 +23,8 @@ import * as path from "path";
 
 import * as os from "os";
 
+import { cloneAndZipRepository } from "./services/githubService";
+
 // Configure multer for ZIP uploads
 // On Vercel, we must use /tmp. On local, we can use uploads/
 const isVercel = process.env.VERCEL === "1";
@@ -114,6 +116,51 @@ export async function registerRoutes(
     try {
       const validatedData = insertProjectSchema.parse(req.body);
       const project = await storage.createProject(validatedData);
+
+      // Handle GitHub Import
+      if (validatedData.sourceType === "github" && validatedData.sourceValue) {
+        try {
+          console.log(`Starting GitHub import for ${project.id} from ${validatedData.sourceValue}`);
+          
+          const zipPath = await cloneAndZipRepository(validatedData.sourceValue, project.id);
+          
+          // Update project with ZIP path
+          let updatedProject = await storage.updateProject(project.id, {
+            zipStoredPath: zipPath,
+            zipOriginalFilename: "github-source.zip",
+            zipAnalysisStatus: "pending",
+          } as any);
+
+          // Analyze the imported project
+          const analysis = await analyzeZipProject(updatedProject!);
+          
+          updatedProject = await storage.updateProject(project.id, {
+            zipAnalysisStatus: "success",
+            projectType: analysis.projectType,
+            projectValidity: analysis.projectValidity,
+            validationErrors: JSON.stringify(analysis.validationErrors),
+            normalizedStatus: analysis.normalizedStatus,
+            normalizedFolderPath: analysis.normalizedFolderPath,
+            normalizedReport: analysis.normalizedReport,
+            readyForDeploy: analysis.readyForDeploy ? "true" : "false",
+            zipAnalysisReport: analysis.analysisReport,
+          } as any);
+
+          console.log(`GitHub import successful for ${project.id}`);
+          return res.status(201).json(updatedProject);
+
+        } catch (error) {
+          console.error("GitHub import failed:", error);
+          
+          const failedProject = await storage.updateProject(project.id, {
+            zipAnalysisStatus: "failed",
+            zipAnalysisReport: `GitHub import failed: ${error instanceof Error ? error.message : String(error)}`,
+          } as any);
+          
+          return res.status(201).json(failedProject);
+        }
+      }
+
       res.status(201).json(project);
     } catch (error) {
       if (error instanceof ZodError) {

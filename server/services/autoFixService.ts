@@ -50,6 +50,15 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         actions.push("No specific auto-fixes available for this project type.");
     }
 
+    // Generate Dockerfile if missing
+    await generateDockerfile(folderPath, projectType, actions);
+
+    // Generate .env.example if missing
+    await generateEnvExample(folderPath, actions);
+
+    // Generate tsconfig.json if missing and needed
+    await generateTsConfig(folderPath, projectType, actions);
+
     // Determine if ready for deploy
     const readyForDeploy = checkReadyForDeploy(projectType, folderPath);
 
@@ -260,6 +269,171 @@ async function fixReactProject(
   } catch (e) {
     actions.push("Could not update package.json scripts");
   }
+}
+
+/**
+ * Generate Dockerfile based on project type
+ */
+async function generateDockerfile(
+  folderPath: string,
+  projectType: string,
+  actions: string[]
+): Promise<void> {
+  const dockerfilePath = path.join(folderPath, "Dockerfile");
+
+  if (fs.existsSync(dockerfilePath)) {
+    actions.push("Dockerfile already exists");
+    return;
+  }
+
+  let content = "";
+
+  switch (projectType) {
+    case "node_backend":
+      content = `FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+EXPOSE 3000
+CMD ["npm", "start"]`;
+      break;
+
+    case "static_web":
+      content = `FROM nginx:alpine
+COPY . /usr/share/nginx/html
+EXPOSE 80`;
+      break;
+
+    case "nextjs":
+      content = `FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+EXPOSE 3000
+CMD ["npm", "start"]`;
+      break;
+
+    case "react_spa":
+      content = `FROM node:18-alpine as build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]`;
+      break;
+
+    default:
+      // Generic Node.js fallback
+      content = `FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+CMD ["npm", "start"]`;
+  }
+
+  fs.writeFileSync(dockerfilePath, content);
+  actions.push("Generated Dockerfile for " + projectType);
+}
+
+/**
+ * Generate .env.example by scanning for process.env usage
+ */
+async function generateEnvExample(
+  folderPath: string,
+  actions: string[]
+): Promise<void> {
+  const envExamplePath = path.join(folderPath, ".env.example");
+  
+  if (fs.existsSync(envExamplePath)) {
+    actions.push(".env.example already exists");
+    return;
+  }
+
+  const envVars = new Set<string>();
+  const files = findFiles(folderPath, ".js").concat(findFiles(folderPath, ".ts"));
+
+  for (const file of files) {
+    try {
+      const content = fs.readFileSync(file, "utf-8");
+      const regex = /process\.env\.([A-Z_][A-Z0-9_]*)/g;
+      let match;
+      while ((match = regex.exec(content)) !== null) {
+        if (match[1] !== "NODE_ENV") {
+          envVars.add(match[1]);
+        }
+      }
+    } catch (e) {
+      // Ignore read errors
+    }
+  }
+
+  if (envVars.size > 0) {
+    const content = Array.from(envVars).map(v => `${v}=`).join("\n");
+    fs.writeFileSync(envExamplePath, content);
+    actions.push(`Generated .env.example with ${envVars.size} variables`);
+  }
+}
+
+/**
+ * Generate tsconfig.json if missing and needed
+ */
+async function generateTsConfig(
+  folderPath: string,
+  projectType: string,
+  actions: string[]
+): Promise<void> {
+  const tsConfigPath = path.join(folderPath, "tsconfig.json");
+  
+  // Only generate if it's a TS project (has .ts files)
+  const hasTsFiles = findFiles(folderPath, ".ts").length > 0;
+  
+  if (!hasTsFiles) {
+    return;
+  }
+
+  if (fs.existsSync(tsConfigPath)) {
+    actions.push("tsconfig.json already exists");
+    return;
+  }
+
+  const tsConfig: any = {
+    compilerOptions: {
+      target: "es2016",
+      module: "commonjs",
+      esModuleInterop: true,
+      forceConsistentCasingInFileNames: true,
+      strict: true,
+      skipLibCheck: true
+    }
+  };
+
+  if (projectType === "nextjs" || projectType === "react_spa") {
+    Object.assign(tsConfig.compilerOptions, {
+      jsx: "react-jsx",
+      module: "esnext",
+      moduleResolution: "node",
+      lib: ["dom", "dom.iterable", "esnext"],
+      allowJs: true,
+      noEmit: true,
+      incremental: true,
+      resolveJsonModule: true,
+      isolatedModules: true,
+    });
+    tsConfig.include = ["**/*.ts", "**/*.tsx"];
+    tsConfig.exclude = ["node_modules"];
+  }
+
+  fs.writeFileSync(tsConfigPath, JSON.stringify(tsConfig, null, 2));
+  actions.push("Generated tsconfig.json");
 }
 
 /**
