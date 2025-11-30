@@ -8,6 +8,7 @@ import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { generateIosWrapper } from "./services/mobileIosService";
 import { analyzeZipProject } from "./services/zipAnalyzer";
 import { classifyProject } from "./services/projectClassifier";
+import { normalizeProjectStructure } from "./services/projectNormalizer";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import multer from "multer";
@@ -352,15 +353,20 @@ export async function registerRoutes(
           projectType: analysis.projectType,
           projectValidity: analysis.projectValidity,
           validationErrors: JSON.stringify(analysis.validationErrors),
+          normalizedStatus: analysis.normalizedStatus,
+          normalizedFolderPath: analysis.normalizedFolderPath,
+          normalizedReport: analysis.normalizedReport,
+          readyForDeploy: analysis.readyForDeploy ? "true" : "false",
           zipAnalysisReport: analysis.analysisReport,
         });
 
-        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (${analysis.projectValidity})`);
+        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (ready: ${analysis.readyForDeploy})`);
       } catch (error) {
         console.error(`[ZIP] Analysis failed for ${project.id}:`, error);
         updatedProject = await storage.updateProject(project.id, {
           zipAnalysisStatus: "failed",
           projectValidity: "invalid",
+          normalizedStatus: "failed",
           zipAnalysisReport: `Analysis failed: ${error instanceof Error ? error.message : "Unknown error"}`,
         });
       }
@@ -415,6 +421,27 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching classification:", error);
       res.status(500).json({ error: "Failed to fetch classification" });
+    }
+  });
+
+  // GET /api/projects/:id/normalization - Get project normalization details
+  app.get("/api/projects/:id/normalization", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      res.json({
+        normalizedStatus: project.normalizedStatus || "none",
+        normalizedReport: project.normalizedReport,
+        readyForDeploy: project.readyForDeploy === "true",
+      });
+    } catch (error) {
+      console.error("Error fetching normalization:", error);
+      res.status(500).json({ error: "Failed to fetch normalization" });
     }
   });
 

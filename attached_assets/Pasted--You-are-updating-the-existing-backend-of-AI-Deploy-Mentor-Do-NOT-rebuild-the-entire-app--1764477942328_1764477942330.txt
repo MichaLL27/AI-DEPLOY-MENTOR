@@ -1,0 +1,325 @@
+
+You are updating the existing backend of **AI Deploy Mentor**.
+Do NOT rebuild the entire app.  
+Keep the current ZIP analyzer, project classifier, QA, deploy, and mobile features.
+
+Your task now:  
+Add an **Automatic Project Normalizer** that cleans and restructures project files
+after ZIP extraction, so they are ready for deployment.
+
+The goal:  
+Given an extracted project folder and its detected `project_type`,  
+transform messy or deeply nested structures into a **clean, standard layout**,  
+remove junk files, and generate a human-readable "normalization report".
+
+-------------------------------------------------------
+1. Data model changes (projects table)
+-------------------------------------------------------
+
+Extend the `projects` table/model with:
+
+- `normalized_status`        // "none" | "running" | "success" | "failed"
+- `normalized_folder_path`   // string | null   (path to normalized project directory)
+- `normalized_report`        // TEXT or JSON, nullable (description of what was changed)
+- `ready_for_deploy`         // boolean, default false
+
+Update:
+- DB schema / migrations
+- Project types/interfaces
+- API JSON serialization
+
+Defaults:
+- normalized_status = "none"
+- normalized_folder_path = null
+- normalized_report = null
+- ready_for_deploy = false
+
+-------------------------------------------------------
+2. Create Normalizer service
+-------------------------------------------------------
+
+Create a new file:
+`services/projectNormalizer.js`
+
+Export:
+
+```js
+async function normalizeProjectStructure(project, extractedFolderPath) { ... }
+module.exports = { normalizeProjectStructure };
+````
+
+### Behavior of normalizeProjectStructure(project, extractedFolderPath):
+
+Input:
+
+* `project`: the DB project record (contains project_type, etc.)
+* `extractedFolderPath`: absolute path to the folder where ZIP was extracted
+
+Steps:
+
+1. Initialize an array `actions = []` to log all changes.
+
+2. Based on `project.project_type`, apply different normalization strategies:
+
+   ---
+
+   ## Case A: project_type === "static_web"
+
+   Goal: ensure we have a clean static site root with `index.html`.
+
+   * Look for `index.html` in:
+
+     * root
+     * first-level subfolders (e.g. `/dist`, `/build`, `/public`, `/website`)
+
+   * If `index.html` is only found in a nested folder like `/dist` or `/build`:
+
+     * Move the entire contents of that folder up into a **new normalized root** folder,
+       e.g.: `./normalized/<project.id>/`
+     * Log an action: `"Moved static site from /dist to normalized root."`
+
+   * Remove junk folders:
+
+     * any `node_modules`, `.git`, `.cache`, `.DS_Store`, `__MACOSX`, log files, etc.
+     * Log removed paths.
+
+   * Result:
+
+     * normalized folder contains:
+
+       * `index.html`
+       * `assets/`, `css/`, `js/` etc.
+     * This folder will later be used as deployment source for static hosting.
+
+   ---
+
+   ## Case B: project_type === "node_backend"
+
+   Goal: ensure a clean Node.js backend structure with a clear entry file.
+
+   * Look for `package.json`. If it's in a nested folder like `/server` or `/backend`,
+     move that folder to a new normalized root (`./normalized/<project.id>/`).
+
+   * Identify the most likely entry file:
+
+     * `server.js`, `app.js`, `index.js` in root or `src/`.
+
+   * If entry file is found in nested places, move it into normalized root and adjust
+     the folder structure so that:
+
+     * `package.json` is at normalized root
+     * entry file is at normalized root or under `src/`
+
+   * Remove:
+
+     * `node_modules`
+     * `.git`, `.cache`, `logs/`, `*.log`, temp folders
+
+   * Do NOT delete `package.json`, `package-lock.json`, or main source folders.
+
+   * Log actions:
+
+     * `"Moved backend from /backend to normalized root."`
+     * `"Detected entry file: server.js"`
+     * `"Removed node_modules and logs."`
+
+   ---
+
+   ## Case C: project_type === "nextjs" or "react_spa"
+
+   Goal: produce a clean root that matches typical deployment patterns.
+
+   * If a build folder exists (`/out`, `/build`, `/dist`):
+
+     * Note in report: either:
+
+       * we will deploy from source (recommended for CI), OR
+       * we might use it as static build (future).
+   * Ensure `package.json` lives in normalized root.
+   * Move nested `src`, `public` folders into normalized root if necessary.
+   * Remove `node_modules`, `.git`, `.next`, `dist`, `build` if they are
+     outputs that can be regenerated.
+   * Log what was kept and what was removed.
+
+   ---
+
+   ## Case D: project_type === "unknown" or "python_flask"
+
+   * For unknown:
+
+     * Only perform **safe cleanup**:
+
+       * remove `.DS_Store`, `__MACOSX`, `.git`, obvious temp/log folders
+       * keep everything else
+     * project_validity likely remains "warning" or "invalid".
+   * For python_flask:
+
+     * Make sure `requirements.txt` and main `.py` file stay in normalized root.
+     * Remove `.venv`, `__pycache__`, etc.
+   * Log everything that was changed.
+
+3. Normalized root folder:
+
+   * For all types, create a new folder:
+     `./normalized/<project.id>/`
+   * Copy/move the selected cleaned structure there.
+   * Use this path as the canonical folder for future build/deploy steps.
+
+4. Build a `normalized_report` string, for example:
+
+   ```text
+   Normalization Report for project <id>:
+   - Detected type: node_backend
+   - Source folder: /backend
+   - Actions:
+     * Moved /backend to normalized root.
+     * Selected server.js as entry point.
+     * Removed node_modules and 3 log files.
+   - Result: project is ready for deployment as a Node.js web service.
+   ```
+
+5. Decide `ready_for_deploy`:
+
+   * If project_type is known (not "unknown") AND required files exist
+     (e.g. index.html for static, package.json+entry for node, etc.):
+
+     * `ready_for_deploy = true`
+   * Otherwise:
+
+     * `ready_for_deploy = false`
+
+6. Save into DB:
+
+   * normalized_status = "success"
+   * normalized_folder_path = (absolute or relative path to normalized root)
+   * normalized_report = report string
+   * ready_for_deploy = boolean
+
+7. On error:
+
+   * Set normalized_status = "failed"
+   * ready_for_deploy = false
+   * normalized_report = "Error during normalization: <message>"
+
+   Do NOT throw in a way that crashes the server; errors should be logged.
+
+Return the updated project (or the important fields).
+
+---
+
+3. Wiring the Normalizer into the flow
+
+---
+
+After ZIP extraction and classification, call the normalizer.
+
+In `services/zipAnalyzer.js` (or wherever analyzeZipProject runs):
+
+* Once extraction is done and `project_type` is determined:
+
+  * Set `normalized_status = "running"` and save.
+  * Then call:
+
+    ```js
+    const { normalizeProjectStructure } = require('./projectNormalizer');
+    const updatedProject = await normalizeProjectStructure(project, extractedFolderPath);
+    ```
+
+* Update the project with whatever normalizeProjectStructure returns.
+
+---
+
+4. API: expose normalization info
+
+---
+
+Extend existing API responses:
+
+* `GET /api/projects`
+* `GET /api/projects/:id`
+
+to include:
+
+```json
+{
+  "normalized_status": "...",
+  "normalized_folder_path": "...",
+  "normalized_report": "...",
+  "ready_for_deploy": true/false
+}
+```
+
+Optionally, add:
+
+### GET /api/projects/:id/normalization
+
+Returns only:
+
+```json
+{
+  "normalized_status": "...",
+  "normalized_report": "...",
+  "ready_for_deploy": true/false
+}
+```
+
+---
+
+5. Frontend UI changes
+
+---
+
+In the AI Deploy Mentor dashboard:
+
+1. In the project card / detail panel:
+
+   * Show a badge:
+
+     * "Normalization: none"
+     * "Normalization: running"
+     * "Normalization: ready"
+     * "Normalization: failed"
+
+2. If `normalized_report` exists:
+
+   * Show a collapsible section:
+
+     * Title: "Normalization report"
+     * Body: the text report from the backend.
+
+3. If `ready_for_deploy === true`:
+
+   * Highlight the project as:
+
+     * “Ready for deployment”
+   * Optionally, enable a one-click “Deploy now” button.
+
+4. If `ready_for_deploy === false` but `normalized_status === "success"`:
+
+   * Show a small warning:
+
+     * “Project normalized, but not fully ready. Check missing files in report.”
+
+---
+
+6. Constraints
+
+---
+
+* Do NOT remove or break existing behavior (ZIP analysis, classification, QA, deploy, mobile).
+* Keep all file system operations safe; avoid deleting source ZIPs.
+* Only remove obvious junk: `.git`, `node_modules`, `.DS_Store`, temp/cache/logs.
+* Make sure normalization is idempotent as much as possible: calling it twice should not destroy the project.
+* Write clear comments so future developers know where to plug further auto-fix logic.
+
+---
+
+When you are done, I should be able to:
+
+* Upload a messy ZIP project,
+* See its type (static, node, etc.),
+* See its normalized status and report,
+* And know whether it is `ready_for_deploy`.
+
+ 
+ 

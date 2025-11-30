@@ -41,6 +41,10 @@ export const projects = pgTable("projects", {
   projectType: text("project_type").default("unknown"),
   projectValidity: text("project_validity").default("warning"),
   validationErrors: text("validation_errors"),
+  normalizedStatus: text("normalized_status").default("none"),
+  normalizedFolderPath: text("normalized_folder_path"),
+  normalizedReport: text("normalized_report"),
+  readyForDeploy: text("ready_for_deploy").default("false"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

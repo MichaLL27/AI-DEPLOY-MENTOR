@@ -13,6 +13,7 @@ import { AndroidBadge } from "@/components/android-badge";
 import { IosBadge } from "@/components/ios-badge";
 import { ProjectTypeBadge } from "@/components/project-type-badge";
 import { ValidityBadge } from "@/components/validity-badge";
+import { NormalizationBadge } from "@/components/normalization-badge";
 import {
   ArrowLeft,
   PlayCircle,
@@ -38,6 +39,7 @@ export default function ProjectDetail() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [expandValidation, setExpandValidation] = useState(false);
+  const [expandNormalization, setExpandNormalization] = useState(false);
 
   const { data: project, isLoading, error } = useQuery<Project>({
     queryKey: ["/api/projects", id],
@@ -309,9 +311,10 @@ export default function ProjectDetail() {
         <Card>
           <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4">
             <CardTitle className="text-base font-medium">Project Status</CardTitle>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <ProjectTypeBadge type={project.projectType} />
               <ValidityBadge validity={project.projectValidity} />
+              <NormalizationBadge status={project.normalizedStatus} readyForDeploy={project.readyForDeploy === "true"} />
               {isDeployed && (
                 <>
                   <AndroidBadge status={project.mobileAndroidStatus} />
@@ -357,6 +360,29 @@ export default function ProjectDetail() {
                         ))}
                       </div>
                     )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {project.normalizedReport && (
+              <div className="border-t pt-4">
+                <button
+                  onClick={() => setExpandNormalization(!expandNormalization)}
+                  className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="button-toggle-normalization"
+                >
+                  <ChevronDown 
+                    className={`h-4 w-4 transition-transform ${expandNormalization ? 'rotate-180' : ''}`}
+                  />
+                  Normalization Report
+                </button>
+                
+                {expandNormalization && (
+                  <div className="mt-3 text-sm">
+                    <div className="bg-muted p-3 rounded font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+                      {project.normalizedReport}
+                    </div>
                   </div>
                 )}
               </div>

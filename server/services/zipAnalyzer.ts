@@ -3,6 +3,7 @@ import * as path from "path";
 import AdmZip from "adm-zip";
 import type { Project } from "@shared/schema";
 import { classifyProject } from "./projectClassifier";
+import { normalizeProjectStructure } from "./projectNormalizer";
 
 /**
  * Analyze an uploaded ZIP project to detect type and structure
@@ -113,6 +114,15 @@ Files Found:
     // Run full classification on extracted folder
     const classification = await classifyProject(extractDir);
 
+    // Create a mock project for normalizer
+    const mockProject: Partial<Project> = {
+      id: project.id,
+      projectType: classification.projectType,
+    };
+
+    // Normalize the project structure
+    const normalization = await normalizeProjectStructure(mockProject as Project, extractDir);
+
     // Cleanup temp extraction
     fs.rmSync(extractDir, { recursive: true, force: true });
 
@@ -120,6 +130,10 @@ Files Found:
       projectType: classification.projectType,
       projectValidity: classification.projectValidity,
       validationErrors: classification.validationErrors,
+      normalizedStatus: normalization.normalizedStatus,
+      normalizedFolderPath: normalization.normalizedFolderPath,
+      normalizedReport: normalization.normalizedReport,
+      readyForDeploy: normalization.readyForDeploy,
       analysisReport: report,
     };
   } catch (error) {
