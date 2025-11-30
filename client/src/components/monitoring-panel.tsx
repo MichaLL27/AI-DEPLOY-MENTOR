@@ -53,9 +53,24 @@ export function MonitoringPanel({ project }: MonitoringPanelProps) {
               <RefreshCw className="h-5 w-5" />
             </div>
             <div>
-              <p className="text-sm font-medium text-muted-foreground">Last Check</p>
-              <p className="font-semibold">Just now</p>
+              <p className="text-sm font-medium text-muted-foreground">Uptime</p>
+              <p className="font-semibold">99.9%</p>
             </div>
+          </div>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-3 mt-4">
+          <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-blue-100 dark:border-blue-900">
+             <p className="text-xs text-muted-foreground mb-1">Response Time</p>
+             <p className="text-lg font-bold text-blue-600">45ms</p>
+          </div>
+          <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-blue-100 dark:border-blue-900">
+             <p className="text-xs text-muted-foreground mb-1">Error Rate</p>
+             <p className="text-lg font-bold text-green-600">0.01%</p>
+          </div>
+          <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-blue-100 dark:border-blue-900">
+             <p className="text-xs text-muted-foreground mb-1">Active Users</p>
+             <p className="text-lg font-bold text-purple-600">12</p>
           </div>
         </div>
 

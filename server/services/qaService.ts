@@ -32,7 +32,19 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
     // 1. Run local tests if available
     let localTestReport = "";
     if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
-      localTestReport = await runLocalTests(project.normalizedFolderPath);
+      // Ensure dependencies are installed before running tests
+      try {
+        const hasNodeModules = fs.existsSync(path.join(project.normalizedFolderPath, "node_modules"));
+        if (!hasNodeModules && fs.existsSync(path.join(project.normalizedFolderPath, "package.json"))) {
+          console.log(`[QA] Installing dependencies for ${project.id}...`);
+          await execAsync("npm install", { cwd: project.normalizedFolderPath, timeout: 120000 });
+        }
+      } catch (e) {
+        console.error("[QA] Failed to install dependencies:", e);
+        localTestReport += "Failed to install dependencies. Tests might fail.\n";
+      }
+
+      localTestReport += await runLocalTests(project.normalizedFolderPath);
     }
 
     const report = await pRetry(
@@ -97,8 +109,16 @@ Provide a comprehensive QA report.`
     );
 
     // Determine if QA passed based on the report content
-    const passed = !report.toLowerCase().includes("fail") || 
+    // Also consider local test results if they exist
+    const localTestsFailed = localTestReport.includes("Result: FAIL");
+    
+    let passed = !report.toLowerCase().includes("fail") || 
                    report.toLowerCase().includes("pass");
+
+    if (localTestsFailed) {
+      passed = false;
+      report += "\n\nCRITICAL: Local tests failed. See 'Local Test Execution Results' above.";
+    }
 
     const timestamp = new Date().toISOString();
     const fullReport = `QA Report for "${project.name}"

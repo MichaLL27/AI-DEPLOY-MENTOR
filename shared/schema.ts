@@ -30,6 +30,7 @@ export const projects = pgTable("projects", {
   renderDashboardUrl: text("render_dashboard_url"),
   lastDeployId: text("last_deploy_id"),
   lastDeployStatus: text("last_deploy_status"),
+  deployLogs: text("deploy_logs"),
   mobileAndroidStatus: text("mobile_android_status").default("none"),
   mobileAndroidDownloadUrl: text("mobile_android_download_url"),
   mobileIosStatus: text("mobile_ios_status").default("none"),

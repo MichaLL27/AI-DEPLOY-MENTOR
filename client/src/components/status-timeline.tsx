@@ -1,111 +1,127 @@
-import type { ProjectStatus } from "@shared/schema";
-import { CheckCircle2, Circle, Loader2 } from "lucide-react";
+import type { Project } from "@shared/schema";
+import { CheckCircle2, Circle, Loader2, AlertCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface StatusTimelineProps {
-  currentStatus: ProjectStatus;
+  project: Project;
 }
 
 const steps = [
-  { status: "registered", label: "Registered" },
-  { status: "qa_passed", label: "QA Passed", failStatus: "qa_failed", runningStatus: "qa_running" },
-  { status: "deployed", label: "Deployed", failStatus: "deploy_failed", runningStatus: "deploying" },
+  { id: "build", label: "Build Started" },
+  { id: "analysis", label: "AI Analysis" },
+  { id: "fixing", label: "Auto-Fixing" },
+  { id: "qa", label: "QA Check" },
+  { id: "deploy", label: "Deployment" },
+  { id: "monitor", label: "Monitoring" },
 ] as const;
 
 function getStepState(
-  stepIndex: number,
-  currentStatus: ProjectStatus
+  stepId: string,
+  project: Project
 ): "completed" | "current" | "running" | "failed" | "pending" {
-  const step = steps[stepIndex];
+  const { status, normalizedStatus, autoFixStatus, readyForDeploy } = project;
 
-  if (step.status === "registered") {
-    return currentStatus === "registered" ? "current" : "completed";
+  switch (stepId) {
+    case "build":
+      return "completed"; // Always completed if project exists
+
+    case "analysis":
+      if (normalizedStatus === "success") return "completed";
+      if (normalizedStatus === "failed") return "failed";
+      // If we are in any later stage, it's completed
+      if (status !== "registered" || autoFixStatus !== "none") return "completed";
+      return "current"; // Default start state
+
+    case "fixing":
+      // If we are in QA or later stages, consider fixing "completed" (or skipped successfully)
+      if (status === "qa_passed" || status === "qa_running" || status === "qa_failed" || status === "deploying" || status === "deployed") return "completed";
+      
+      if (autoFixStatus === "success" || readyForDeploy === "true") return "completed";
+      if (autoFixStatus === "running") return "running";
+      if (autoFixStatus === "failed") return "failed";
+      if (normalizedStatus === "success" && autoFixStatus === "none") return "current";
+      return "pending";
+
+    case "qa":
+      if (status === "qa_passed" || status === "deploying" || status === "deployed" || status === "deploy_failed") return "completed";
+      if (status === "qa_running") return "running";
+      if (status === "qa_failed") return "failed";
+      if (readyForDeploy === "true" && status === "registered") return "current";
+      return "pending";
+
+    case "deploy":
+      if (status === "deployed") return "completed";
+      if (status === "deploying") return "running";
+      if (status === "deploy_failed") return "failed";
+      if (status === "qa_passed") return "current";
+      return "pending";
+
+    case "monitor":
+      if (status === "deployed") return "current"; // Active monitoring
+      return "pending";
+      
+    default:
+      return "pending";
   }
-
-  if (step.failStatus && currentStatus === step.failStatus) {
-    return "failed";
-  }
-
-  if (step.runningStatus && currentStatus === step.runningStatus) {
-    return "running";
-  }
-
-  const statusOrder = ["registered", "qa_running", "qa_passed", "qa_failed", "deploying", "deployed", "deploy_failed"];
-  const currentIndex = statusOrder.indexOf(currentStatus);
-  const stepMainIndex = statusOrder.indexOf(step.status);
-
-  if (currentIndex >= stepMainIndex && !["qa_failed", "deploy_failed"].includes(currentStatus)) {
-    return "completed";
-  }
-
-  if (stepIndex === 1 && ["qa_running", "qa_passed", "qa_failed"].includes(currentStatus)) {
-    if (currentStatus === "qa_passed") return "completed";
-    if (currentStatus === "qa_running") return "running";
-    if (currentStatus === "qa_failed") return "failed";
-  }
-
-  if (stepIndex === 2 && ["deploying", "deployed", "deploy_failed"].includes(currentStatus)) {
-    if (currentStatus === "deployed") return "completed";
-    if (currentStatus === "deploying") return "running";
-    if (currentStatus === "deploy_failed") return "failed";
-  }
-
-  return "pending";
 }
 
-export function StatusTimeline({ currentStatus }: StatusTimelineProps) {
+export function StatusTimeline({ project }: StatusTimelineProps) {
   return (
-    <div className="flex items-center gap-2" data-testid="status-timeline">
-      {steps.map((step, index) => {
-        const state = getStepState(index, currentStatus);
-        const isLast = index === steps.length - 1;
+    <div className="w-full overflow-x-auto pb-6 pt-2">
+      <div className="flex items-center justify-between min-w-[700px] px-4" data-testid="status-timeline">
+        {steps.map((step, index) => {
+          const state = getStepState(step.id, project);
+          const isLast = index === steps.length - 1;
 
-        return (
-          <div key={step.status} className="flex items-center gap-2">
-            <div className="flex flex-col items-center">
-              <div
-                className={cn(
-                  "flex items-center justify-center w-8 h-8 rounded-full border-2 transition-all",
-                  state === "completed" && "bg-chart-2 border-chart-2 text-white",
-                  state === "current" && "border-primary bg-primary/10 text-primary",
-                  state === "running" && "border-chart-4 bg-chart-4/10 text-chart-4",
-                  state === "failed" && "border-destructive bg-destructive/10 text-destructive",
-                  state === "pending" && "border-muted-foreground/30 text-muted-foreground/50"
-                )}
-              >
-                {state === "completed" && <CheckCircle2 className="h-4 w-4" />}
-                {state === "running" && <Loader2 className="h-4 w-4 animate-spin" />}
-                {(state === "current" || state === "pending" || state === "failed") && (
-                  <Circle className="h-4 w-4" />
-                )}
+          return (
+            <div key={step.id} className="flex-1 flex items-center relative group">
+              <div className="flex flex-col items-center relative z-10 w-full">
+                <div
+                  className={cn(
+                    "flex items-center justify-center w-8 h-8 rounded-full border-2 transition-all duration-500 z-20 bg-background",
+                    state === "completed" && "bg-primary border-primary text-primary-foreground shadow-[0_0_10px_rgba(0,0,0,0.1)] dark:shadow-[0_0_15px_rgba(255,255,255,0.2)]",
+                    state === "current" && "border-primary text-primary ring-4 ring-primary/20 scale-110",
+                    state === "running" && "border-blue-500 text-blue-500 animate-pulse",
+                    state === "failed" && "border-destructive text-destructive bg-destructive/10",
+                    state === "pending" && "border-muted-foreground/30 text-muted-foreground/30"
+                  )}
+                >
+                  {state === "completed" && <CheckCircle2 className="h-4 w-4" />}
+                  {state === "running" && <Loader2 className="h-4 w-4 animate-spin" />}
+                  {state === "failed" && <AlertCircle className="h-4 w-4" />}
+                  {(state === "current" || state === "pending") && (
+                    <div className={cn("h-2.5 w-2.5 rounded-full", state === "current" ? "bg-primary" : "bg-muted-foreground/30")} />
+                  )}
+                </div>
+                <span
+                  className={cn(
+                    "text-[10px] uppercase tracking-wider mt-3 font-semibold whitespace-nowrap absolute top-8 transition-colors duration-300",
+                    state === "completed" && "text-primary",
+                    state === "current" && "text-primary",
+                    state === "running" && "text-blue-600",
+                    state === "failed" && "text-destructive",
+                    state === "pending" && "text-muted-foreground/50"
+                  )}
+                >
+                  {step.label}
+                </span>
               </div>
-              <span
-                className={cn(
-                  "text-xs mt-1.5 font-medium whitespace-nowrap",
-                  state === "completed" && "text-chart-2",
-                  state === "current" && "text-primary",
-                  state === "running" && "text-chart-4",
-                  state === "failed" && "text-destructive",
-                  state === "pending" && "text-muted-foreground/50"
-                )}
-              >
-                {step.label}
-              </span>
-            </div>
 
-            {!isLast && (
-              <div
-                className={cn(
-                  "h-0.5 w-12 sm:w-16 -mt-5",
-                  getStepState(index + 1, currentStatus) !== "pending"
-                    ? "bg-chart-2"
-                    : "bg-muted-foreground/20"
-                )}
-              />
-            )}
-          </div>
-        );
-      })}
+              {!isLast && (
+                <div className="absolute left-[50%] w-full h-[2px] top-4 -translate-y-1/2 z-0">
+                  <div className="w-full h-full bg-muted/30" />
+                  <div 
+                    className={cn(
+                      "absolute inset-0 h-full bg-primary transition-all duration-1000 ease-in-out origin-left",
+                      state === "completed" ? "scale-x-100" : "scale-x-0"
+                    )} 
+                  />
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

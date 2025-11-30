@@ -210,6 +210,25 @@ export async function registerRoutes(
         });
       }
 
+      // Auto-fix if not already done or if it failed previously
+      // This ensures we always test the best version of the code
+      if (project.autoFixStatus !== "success") {
+        console.log(`[QA] Auto-fix not completed (status: ${project.autoFixStatus}). Running auto-fix before QA...`);
+        await storage.updateProject(id, { autoFixStatus: "running" });
+        try {
+          await autoFixProject(project);
+          // Refresh project state after fix
+          const fixedProject = await storage.getProject(id);
+          if (fixedProject) {
+            // Update local project reference
+            Object.assign(project, fixedProject);
+          }
+        } catch (err) {
+          console.error("[QA] Auto-fix failed during pre-QA check:", err);
+          // We continue to QA even if fix fails, so QA can report the issues
+        }
+      }
+
       // Update status to qa_running
       await storage.updateProject(id, { status: "qa_running" });
 
@@ -704,6 +723,57 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error closing PR:", error);
       res.status(500).json({ error: "Failed to close pull request" });
+    }
+  });
+
+  // GET /api/projects/:id/files - List project files
+  app.get("/api/projects/:id/files", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!project.normalizedFolderPath || !fs.existsSync(project.normalizedFolderPath)) {
+        return res.json({ files: [] });
+      }
+
+      const files: { path: string; type: "file" | "directory" }[] = [];
+      
+      const walk = (dir: string, relativePath: string) => {
+        const items = fs.readdirSync(dir);
+        for (const item of items) {
+          if (item === "node_modules" || item === ".git") continue;
+          
+          const fullPath = path.join(dir, item);
+          const itemRelPath = path.join(relativePath, item);
+          const stat = fs.statSync(fullPath);
+          
+          files.push({
+            path: itemRelPath.replace(/\\/g, "/"),
+            type: stat.isDirectory() ? "directory" : "file"
+          });
+
+          if (stat.isDirectory()) {
+            walk(fullPath, itemRelPath);
+          }
+        }
+      };
+
+      walk(project.normalizedFolderPath, "");
+      
+      // Sort: directories first, then files
+      files.sort((a, b) => {
+        if (a.type === b.type) return a.path.localeCompare(b.path);
+        return a.type === "directory" ? -1 : 1;
+      });
+
+      res.json({ files });
+    } catch (error) {
+      console.error("Error listing files:", error);
+      res.status(500).json({ error: "Failed to list files" });
     }
   });
 
