@@ -1,4 +1,4 @@
-import { pgTable, text, varchar, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, timestamp, integer, json } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
@@ -48,9 +48,31 @@ export const projects = pgTable("projects", {
   autoFixStatus: text("auto_fix_status").default("none"),
   autoFixReport: text("auto_fix_report"),
   autoFixedAt: timestamp("auto_fixed_at"),
+  lastPrNumber: integer("last_pr_number").default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
+
+export const pullRequests = pgTable("pull_requests", {
+  id: varchar("id").primaryKey(),
+  projectId: varchar("project_id").notNull(),
+  prNumber: integer("pr_number").notNull(),
+  title: text("title").notNull(),
+  description: text("description"),
+  status: text("status").notNull().default("open"),
+  diffJson: json("diff_json").default([]),
+  patchFolderPath: text("patch_folder_path"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+export interface FileDiff {
+  file: string;
+  change: "added" | "removed" | "modified";
+  before?: string;
+  after?: string;
+}
+
+export type PullRequest = typeof pullRequests.$inferSelect;
 
 export const insertProjectSchema = createInsertSchema(projects).pick({
   name: true,

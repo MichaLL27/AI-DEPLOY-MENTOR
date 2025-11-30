@@ -15,6 +15,8 @@ import { ProjectTypeBadge } from "@/components/project-type-badge";
 import { ValidityBadge } from "@/components/validity-badge";
 import { NormalizationBadge } from "@/components/normalization-badge";
 import { AutoFixBadge } from "@/components/auto-fix-badge";
+import { PullRequestList } from "@/components/pull-request-list";
+import type { PullRequest } from "@shared/schema";
 import {
   ArrowLeft,
   PlayCircle,
@@ -148,6 +150,7 @@ export default function ProjectDetail() {
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      queryClient.invalidateQueries({ queryKey: [`/api/projects/${id}/prs`] });
       toast({
         title: "Auto-fix completed",
         description: data.readyForDeploy ? "Project is now ready for deployment!" : "Project was fixed. Check the report.",
@@ -157,6 +160,46 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
       toast({
         title: "Auto-fix failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const { data: prs = [] } = useQuery<PullRequest[]>({
+    queryKey: [`/api/projects/${id}/prs`],
+  });
+
+  const mergePrMutation = useMutation({
+    mutationFn: async (prId: string) => {
+      const response = await apiRequest("POST", `/api/prs/${prId}/merge`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/projects/${id}/prs`] });
+      toast({ title: "PR merged successfully" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to merge PR",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const closePrMutation = useMutation({
+    mutationFn: async (prId: string) => {
+      const response = await apiRequest("POST", `/api/prs/${prId}/close`);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [`/api/projects/${id}/prs`] });
+      toast({ title: "PR closed" });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Failed to close PR",
         description: error.message,
         variant: "destructive",
       });
@@ -458,6 +501,19 @@ export default function ProjectDetail() {
           </CardContent>
         </Card>
       </div>
+
+      {prs && prs.length > 0 && (
+        <div className="mb-8">
+          <h2 className="text-xl font-semibold mb-4">Code Pull Requests</h2>
+          <PullRequestList
+            prs={prs}
+            onMerge={(prId) => mergePrMutation.mutate(prId)}
+            onClose={(prId) => closePrMutation.mutate(prId)}
+            isMerging={mergePrMutation.isPending ? mergePrMutation.variables : undefined}
+            isClosing={closePrMutation.isPending ? closePrMutation.variables : undefined}
+          />
+        </div>
+      )}
 
       <div className="grid gap-6 md:grid-cols-2">
         <Card>

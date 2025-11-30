@@ -10,6 +10,9 @@ import { analyzeZipProject } from "./services/zipAnalyzer";
 import { classifyProject } from "./services/projectClassifier";
 import { normalizeProjectStructure } from "./services/projectNormalizer";
 import { autoFixProject } from "./services/autoFixService";
+import { createAutoPullRequest, mergePullRequest, closePullRequest } from "./services/pullRequestService";
+import { pullRequests } from "@shared/schema";
+import { eq } from "drizzle-orm";
 import { ZodError } from "zod";
 import { fromZodError } from "zod-validation-error";
 import multer from "multer";
@@ -507,6 +510,102 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Error fetching auto-fix status:", error);
       res.status(500).json({ error: "Failed to fetch auto-fix status" });
+    }
+  });
+
+  // GET /api/projects/:projectId/prs - List pull requests
+  app.get("/api/projects/:projectId/prs", async (req, res) => {
+    try {
+      const { projectId } = req.params;
+      const prs = await storage.db
+        .select()
+        .from(pullRequests)
+        .where(eq(pullRequests.projectId, projectId));
+
+      res.json(prs);
+    } catch (error) {
+      console.error("Error fetching PRs:", error);
+      res.status(500).json({ error: "Failed to fetch pull requests" });
+    }
+  });
+
+  // GET /api/prs/:prId - Get PR details
+  app.get("/api/prs/:prId", async (req, res) => {
+    try {
+      const { prId } = req.params;
+      const pr = await storage.db
+        .select()
+        .from(pullRequests)
+        .where(eq(pullRequests.id, prId))
+        .then(rows => rows[0]);
+
+      if (!pr) {
+        return res.status(404).json({ error: "PR not found" });
+      }
+
+      res.json(pr);
+    } catch (error) {
+      console.error("Error fetching PR:", error);
+      res.status(500).json({ error: "Failed to fetch pull request" });
+    }
+  });
+
+  // POST /api/prs/:prId/merge - Merge PR
+  app.post("/api/prs/:prId/merge", async (req, res) => {
+    try {
+      const { prId } = req.params;
+      const pr = await storage.db
+        .select()
+        .from(pullRequests)
+        .where(eq(pullRequests.id, prId))
+        .then(rows => rows[0]);
+
+      if (!pr) {
+        return res.status(404).json({ error: "PR not found" });
+      }
+
+      const project = await storage.getProject(pr.projectId);
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      try {
+        await mergePullRequest(pr as any, project.normalizedFolderPath || "");
+        
+        // Update PR status in DB
+        const updatedPr = await storage.db
+          .update(pullRequests)
+          .set({ status: "merged" })
+          .where(eq(pullRequests.id, prId))
+          .returning()
+          .then(rows => rows[0]);
+
+        res.json(updatedPr);
+      } catch (error) {
+        console.error("Error merging PR:", error);
+        res.status(500).json({ error: "Failed to merge PR" });
+      }
+    } catch (error) {
+      console.error("Error in merge route:", error);
+      res.status(500).json({ error: "Failed to merge pull request" });
+    }
+  });
+
+  // POST /api/prs/:prId/close - Close PR
+  app.post("/api/prs/:prId/close", async (req, res) => {
+    try {
+      const { prId } = req.params;
+      const updatedPr = await storage.db
+        .update(pullRequests)
+        .set({ status: "closed" })
+        .where(eq(pullRequests.id, prId))
+        .returning()
+        .then(rows => rows[0]);
+
+      res.json(updatedPr);
+    } catch (error) {
+      console.error("Error closing PR:", error);
+      res.status(500).json({ error: "Failed to close pull request" });
     }
   });
 
