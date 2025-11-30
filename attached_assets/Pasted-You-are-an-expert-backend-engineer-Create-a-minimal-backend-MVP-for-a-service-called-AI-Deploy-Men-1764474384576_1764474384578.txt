@@ -1,0 +1,186 @@
+You are an expert backend engineer.
+Create a minimal backend MVP for a service called "AI Deploy Mentor" that will later turn AI-generated or low-code projects into production-ready deployments.
+
+Tech stack
+
+Node.js + Express
+
+Plain JavaScript (no TypeScript for now)
+
+Use npm and a standard package.json
+
+Use dotenv for environment variables
+
+Goal
+
+Build a simple REST API that manages "projects" and runs a 3-step flow:
+
+Register project source (for now just store metadata about where the code is)
+
+Run a fake QA step (simulate AI QA for now with placeholder logic)
+
+Trigger deploy (for now just simulate deploy and store a URL string)
+
+Later I will plug in the real OpenAI, Vercel and Render APIs, so please structure the code cleanly with helper functions.
+
+Project structure
+
+Create this structure:
+
+index.js – main Express server
+
+routes/projects.js – project-related routes
+
+services/qaService.js – handles QA simulation logic
+
+services/deployService.js – handles deploy simulation logic
+
+services/projectStore.js – in-memory project storage (for MVP)
+
+.env – environment config (use placeholders only)
+
+README.md – short description and how to run locally
+
+Data model (in-memory)
+
+Use a simple in-memory store (JavaScript object or Map) to store projects:
+
+Each project should look like:
+
+{
+  id: string,
+  name: string,
+  sourceType: "github" | "replit" | "zip" | "other",
+  sourceValue: string, // e.g., GitHub URL, Replit URL, etc.
+  status: "registered" | "qa_running" | "qa_failed" | "qa_passed" | "deploying" | "deployed" | "deploy_failed",
+  qaReport: string | null,
+  deployedUrl: string | null,
+  createdAt: string,
+  updatedAt: string
+}
+
+API endpoints
+
+Create the following REST endpoints under /api:
+
+POST /api/projects
+
+Body JSON:
+
+{
+  "name": "My test app",
+  "sourceType": "github",
+  "sourceValue": "https://github.com/user/repo"
+}
+
+
+Validate name, sourceType, sourceValue.
+
+Create a new project in memory with status "registered".
+
+Return the full project as JSON.
+
+GET /api/projects
+
+Return list of all projects as JSON.
+
+GET /api/projects/:id
+
+Return a single project by ID.
+
+If not found, return 404 with JSON error.
+
+POST /api/projects/:id/run-qa
+
+Simulate running QA on the project.
+
+Change status to "qa_running", then simulate a result:
+
+For now, just create a fake QA report string like:
+"QA OK: basic checks passed for project <name>."
+
+Set qaReport and status "qa_passed".
+
+Return updated project as JSON.
+
+If invalid ID, return 404.
+
+Important: put the QA logic inside services/qaService.js in a function like:
+
+async function runQaOnProject(project) { ... }
+
+
+So later I can replace the implementation with real OpenAI calls.
+
+POST /api/projects/:id/deploy
+
+Simulate deployment.
+
+Only allow deploy if status === "qa_passed".
+
+Set status to "deploying", then "deployed".
+
+For MVP, set project.deployedUrl to a fake URL like:
+"https://fake-vercel.com/" + project.id
+
+Return updated project as JSON.
+
+Logic for deployment should live in services/deployService.js in a function:
+
+async function deployProject(project) { ... }
+
+
+So later I can replace with real Vercel / Render API calls.
+
+Error handling & responses
+
+Always return JSON responses.
+
+On errors, return:
+
+{
+  "error": "Human readable error message"
+}
+
+
+Use express.json() middleware.
+
+Add basic CORS support (for later dashboard frontend).
+
+.env
+
+Create a .env file with placeholders only:
+
+PORT=3000
+OPENAI_API_KEY=your-openai-key-here
+VERCEL_TOKEN=your-vercel-token-here
+RENDER_TOKEN=your-render-token-here
+
+
+Do not hardcode any secrets in the code. Just read them via process.env.
+
+README.md
+
+Create a short README with:
+
+Project name: AI Deploy Mentor (backend MVP)
+
+How to install & run:
+
+npm install
+
+npm start
+
+Short explanation of the API endpoints and example JSON bodies.
+
+Quality
+
+Use clear function names and comments that explain where I should plug in:
+
+real QA using OpenAI
+
+real deploy to Vercel/Render
+
+Code should be clean, simple, and easy to extend later.
+
+After you generate the code, make sure it runs without syntax errors.
