@@ -246,6 +246,7 @@ export default function ProjectDetail() {
       await apiRequest("DELETE", `/api/projects/${id}`);
     },
     onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       toast({
         title: "Project deleted",
         description: "The project has been successfully deleted.",
@@ -298,7 +299,9 @@ export default function ProjectDetail() {
     );
   }
 
-  const canRunQa = project.status === "registered" || project.status === "qa_failed";
+  const canRunQa = (project.status === "registered" || project.status === "qa_failed") && 
+    (project.autoFixStatus === "success" || project.readyForDeploy === "true");
+  
   const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed";
   const isDeployed = project.status === "deployed";
   const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
@@ -307,9 +310,10 @@ export default function ProjectDetail() {
   const isGeneratingAndroid = generateAndroidMutation.isPending || project.mobileAndroidStatus === "building";
   const canGenerateIos = isDeployed && project.deployedUrl;
   const isGeneratingIos = generateIosMutation.isPending || project.mobileIosStatus === "building";
+  
   // Allow auto-fix if normalized, regardless of ready status (to generate extras like tests/dockerfile)
   // Always show the button, but disable if not normalized or currently running
-  const canAutoFix = !!project.normalizedFolderPath;
+  const canAutoFix = !!project.normalizedFolderPath && project.autoFixStatus !== "success" && project.readyForDeploy !== "true";
   const isAutoFixing = autoFixMutation.isPending || project.autoFixStatus === "running";
   const autoReadyMessage = (project as any).autoReadyMessage;
 
@@ -398,9 +402,25 @@ export default function ProjectDetail() {
           </div>
 
           <div className="flex items-center gap-2">
+            {canAutoFix && (
+              <Button
+                onClick={() => autoFixMutation.mutate()}
+                disabled={isAutoFixing}
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+                data-testid="button-auto-fix"
+              >
+                {isAutoFixing ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Wand2 className="h-4 w-4 mr-2" />
+                )}
+                Auto-fix Project
+              </Button>
+            )}
+
             {canRunQa && (
               <Button
-                variant="outline"
+                variant={canAutoFix ? "outline" : "default"}
                 onClick={() => runQaMutation.mutate()}
                 disabled={isRunningQa}
                 data-testid="button-run-qa"
@@ -411,95 +431,6 @@ export default function ProjectDetail() {
                   <PlayCircle className="h-4 w-4 mr-2" />
                 )}
                 Run QA
-              </Button>
-            )}
-            {canDeploy && (
-              <Button
-                onClick={() => deployMutation.mutate()}
-                disabled={isDeploying}
-                data-testid="button-deploy"
-              >
-                {isDeploying ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Rocket className="h-4 w-4 mr-2" />
-                )}
-                {project.status === "deployed" ? "Redeploy" : "Deploy Now"}
-              </Button>
-            )}
-            {isDeployed && project.deployedUrl && (
-              <Button asChild data-testid="button-view-live">
-                <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  View Live
-                </a>
-              </Button>
-            )}
-
-            {canGenerateAndroid && project.mobileAndroidStatus !== "ready" && (
-              <Button
-                onClick={() => generateAndroidMutation.mutate()}
-                disabled={isGeneratingAndroid}
-                variant="outline"
-                data-testid="button-generate-android"
-              >
-                {isGeneratingAndroid ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Smartphone className="h-4 w-4 mr-2" />
-                )}
-                Generate Android App
-              </Button>
-            )}
-
-            {project.mobileAndroidStatus === "ready" && project.mobileAndroidDownloadUrl && (
-              <Button asChild data-testid="button-download-android">
-                <a href={project.mobileAndroidDownloadUrl} download>
-                  <Download className="h-4 w-4 mr-2" />
-                  Download Android Project
-                </a>
-              </Button>
-            )}
-
-            {canGenerateIos && project.mobileIosStatus !== "ready" && (
-              <Button
-                onClick={() => generateIosMutation.mutate()}
-                disabled={isGeneratingIos}
-                variant="outline"
-                data-testid="button-generate-ios"
-              >
-                {isGeneratingIos ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Apple className="h-4 w-4 mr-2" />
-                )}
-                Generate iOS App
-              </Button>
-            )}
-
-            {project.mobileIosStatus === "ready" && project.mobileIosDownloadUrl && (
-              <Button asChild data-testid="button-download-ios">
-                <a href={project.mobileIosDownloadUrl} download>
-                  <Download className="h-4 w-4 mr-2" />
-                  Download iOS Project
-                </a>
-              </Button>
-            )}
-
-            {canAutoFix && (
-              <Button
-                onClick={() => autoFixMutation.mutate()}
-                disabled={isAutoFixing}
-                variant="outline"
-                className="border-purple-200 hover:bg-purple-50 text-purple-700 dark:border-purple-800 dark:text-purple-300 dark:hover:bg-purple-900/20"
-                data-testid="button-auto-fix"
-              >
-                {isAutoFixing ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Wand2 className="h-4 w-4 mr-2" />
-                )}
-                Auto-fix Project
               </Button>
             )}
           </div>
