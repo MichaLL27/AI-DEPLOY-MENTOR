@@ -20,6 +20,7 @@ import { fromZodError } from "zod-validation-error";
 import multer from "multer";
 import * as fs from "fs";
 import * as path from "path";
+import * as crypto from "crypto";
 
 import * as os from "os";
 
@@ -506,7 +507,7 @@ export async function registerRoutes(
       const projectName = (req.body.name as string) || req.file.originalname.replace(".zip", "");
       
       // Create organized storage path
-      const projectId = require("crypto").randomUUID().substring(0, 12);
+      const projectId = crypto.randomUUID().substring(0, 12);
       const storedDir = isVercel 
         ? path.join(os.tmpdir(), "uploads", "projects", projectId)
         : path.join(process.cwd(), "uploads", "projects", projectId);
