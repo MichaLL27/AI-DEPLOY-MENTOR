@@ -47,7 +47,16 @@ import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
+import { DeploymentStepper } from "@/components/deployment-stepper";
 import { EnvVarsPanel } from "@/components/env-vars-panel";
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
@@ -71,9 +80,34 @@ export default function ProjectDetail() {
     },
   });
 
+  const updateProjectMutation = useMutation({
+    mutationFn: async (updates: Partial<Project>) => {
+      const response = await apiRequest("PATCH", `/api/projects/${id}`, updates);
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
+      toast({
+        title: "Settings updated",
+        description: "Project settings have been saved.",
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Update failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
   const { data: files } = useQuery<{ files: { path: string; type: "file" | "directory" }[] }>({
     queryKey: [`/api/projects/${id}/files`],
     enabled: !!project?.normalizedFolderPath,
+  });
+
+  const { data: providerConfig } = useQuery<{ vercel: boolean; render: boolean; railway: boolean }>({
+    queryKey: ["/api/config/providers"],
   });
 
   const runQaMutation = useMutation({
@@ -311,15 +345,199 @@ export default function ProjectDetail() {
   const canGenerateIos = isDeployed && project.deployedUrl;
   const isGeneratingIos = generateIosMutation.isPending || project.mobileIosStatus === "building";
   
-  // Allow auto-fix if normalized, regardless of ready status (to generate extras like tests/dockerfile)
-  // Always show the button, but disable if not normalized or currently running
-  // CHANGED: Allow auto-fix even if readyForDeploy is true, so user can force fix if needed
   const canAutoFix = !!project.normalizedFolderPath && project.autoFixStatus !== "running";
   const isAutoFixing = autoFixMutation.isPending || project.autoFixStatus === "running";
   const autoReadyMessage = (project as any).autoReadyMessage;
 
+  // Determine current step for stepper
+  let currentStep = 0;
+  if (project.autoFixStatus === "success") currentStep = 1;
+  if (project.status === "qa_passed" || project.status === "qa_failed" || project.status === "deploy_failed") currentStep = 2;
+  if (project.status === "deployed") currentStep = 3;
+
+  // Override for specific states
+  if (project.status === "qa_running") currentStep = 1; // QA is running, so we are past step 1
+  if (project.status === "deploying") currentStep = 2; // Deploying, so we are past step 2
+
+  const steps = [
+    { 
+      id: "fix", 
+      label: "Analysis & Fix", 
+      description: "Code repair & Env detection",
+      status: project.autoFixStatus === "success" ? "completed" : project.autoFixStatus === "failed" ? "error" : "pending"
+    },
+    { 
+      id: "qa", 
+      label: "Quality Assurance", 
+      description: "Run tests & checks",
+      status: project.status === "qa_passed" ? "completed" : project.status === "qa_failed" ? "error" : "pending"
+    },
+    { 
+      id: "deploy", 
+      label: "Deployment", 
+      description: "Push to production",
+      status: project.status === "deployed" ? "completed" : project.status === "deploy_failed" ? "error" : "pending"
+    },
+    { 
+      id: "live", 
+      label: "Live", 
+      description: "Monitor application",
+      status: project.status === "deployed" ? "completed" : "pending"
+    }
+  ] as any[];
+
   return (
     <div className="container max-w-6xl mx-auto py-8 px-4">
+      <div className="mb-8">
+        <Link href="/">
+          <Button variant="ghost" size="sm" className="mb-4" data-testid="button-back">
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Projects
+          </Button>
+        </Link>
+
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-4">
+            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
+              <span className="text-2xl font-bold text-primary">
+                {project.name.charAt(0).toUpperCase()}
+              </span>
+            </div>
+            <div>
+              <h1 
+                className="text-2xl sm:text-3xl font-bold tracking-tight"
+                data-testid="text-project-title"
+              >
+                {project.name}
+              </h1>
+              <div className="flex items-center gap-3 mt-1">
+                <SourceIcon sourceType={project.sourceType} />
+                <StatusBadge status={project.status} />
+              </div>
+            </div>
+          </div>
+          
+          {isDeployed && project.deployedUrl && (
+            <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
+              <Button className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
+                <ExternalLink className="h-4 w-4 mr-2" />
+                View Live App
+              </Button>
+            </a>
+          )}
+        </div>
+      </div>
+
+      {/* Stepper Component */}
+      <div className="mb-8 bg-card rounded-xl border shadow-sm p-4">
+        <DeploymentStepper currentStep={currentStep} steps={steps} />
+        
+        {/* Guided Action Area */}
+        <div className="mt-6 flex flex-col items-center justify-center border-t pt-6">
+          <h3 className="text-lg font-medium mb-4">
+            {currentStep === 0 && "Step 1: Analyze and Fix Issues"}
+            {currentStep === 1 && "Step 2: Verify Quality"}
+            {currentStep === 2 && "Step 3: Deploy to Production"}
+            {currentStep === 3 && "Project is Live!"}
+          </h3>
+          
+          <div className="flex gap-4">
+            {currentStep === 0 && (
+              <Button
+                onClick={() => autoFixMutation.mutate()}
+                disabled={isAutoFixing}
+                size="lg"
+                className="bg-purple-600 hover:bg-purple-700 text-white min-w-[200px]"
+              >
+                {isAutoFixing ? (
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                ) : (
+                  <Wand2 className="h-5 w-5 mr-2" />
+                )}
+                Fix Automatically
+              </Button>
+            )}
+
+            {currentStep === 1 && (
+              <Button
+                onClick={() => runQaMutation.mutate()}
+                disabled={isRunningQa}
+                size="lg"
+                className="min-w-[200px]"
+              >
+                {isRunningQa ? (
+                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                ) : (
+                  <PlayCircle className="h-5 w-5 mr-2" />
+                )}
+                Run QA Checks
+              </Button>
+            )}
+
+            {currentStep === 2 && (
+              <div className="flex flex-col gap-4 items-center">
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-medium text-muted-foreground">Deploy to:</span>
+                  <Select
+                    value={project.deploymentTarget || "auto"}
+                    onValueChange={(val) => updateProjectMutation.mutate({ deploymentTarget: val as any })}
+                    disabled={isDeploying}
+                  >
+                    <SelectTrigger className="w-[180px]">
+                      <SelectValue placeholder="Select provider" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="auto">Auto (Best Available)</SelectItem>
+                      <SelectItem value="vercel" disabled={!providerConfig?.vercel}>
+                        Vercel {!providerConfig?.vercel && "(Not Configured)"}
+                      </SelectItem>
+                      <SelectItem value="render" disabled={!providerConfig?.render}>
+                        Render {!providerConfig?.render && "(Not Configured)"}
+                      </SelectItem>
+                      <SelectItem value="railway" disabled={!providerConfig?.railway}>
+                        Railway {!providerConfig?.railway && "(Not Configured)"}
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <Button
+                  onClick={() => deployMutation.mutate()}
+                  disabled={isDeploying}
+                  size="lg"
+                  className="bg-green-600 hover:bg-green-700 text-white min-w-[200px]"
+                >
+                  {isDeploying ? (
+                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                  ) : (
+                    <Rocket className="h-5 w-5 mr-2" />
+                  )}
+                  Deploy Now
+                </Button>
+              </div>
+            )}
+            
+            {currentStep === 3 && (
+               <Button
+                variant="outline"
+                onClick={() => deployMutation.mutate()}
+                disabled={isDeploying}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                Redeploy
+              </Button>
+            )}
+          </div>
+          
+          <p className="text-sm text-muted-foreground mt-3 text-center max-w-md">
+            {currentStep === 0 && "We'll scan your code, fix common errors, generate missing config files, and detect environment variables."}
+            {currentStep === 1 && "We'll run a comprehensive quality assurance check to ensure your app is stable and bug-free."}
+            {currentStep === 2 && "We'll sync your environment variables and push your application to the cloud."}
+            {currentStep === 3 && "Your application is running. You can monitor its status below."}
+          </p>
+        </div>
+      </div>
+
       {project.lastDeployStatus === "recovery_triggered" && (
         <Alert className="mb-8 border-blue-500 bg-blue-50 dark:bg-blue-950">
           <Activity className="h-4 w-4 text-blue-600" />
@@ -344,7 +562,7 @@ export default function ProjectDetail() {
                 if (keyErrorMatch) return keyErrorMatch[1];
 
                 // 2. Explicit Reason (Future proofing)
-                const summaryMatch = report.match(/\*\*Verdict:\*\* FAIL[^\n]*\n\*\*Reason:\*\*\s*(.+?)(\n|$)/s);
+                const summaryMatch = report.match(/\*\*Verdict:\*\* FAIL[^\n]*\n\*\*Reason:\*\*\s*(.+?)(\n|$)/);
                 if (summaryMatch) return summaryMatch[1];
 
                 // 3. Extract from Summary & Verdict section
@@ -713,7 +931,11 @@ export default function ProjectDetail() {
       )}
 
       <div className="mb-8">
-        <EnvVarsPanel projectId={id!} />
+        <EnvVarsPanel 
+          projectId={id!} 
+          onDeploy={canDeploy ? () => deployMutation.mutate() : undefined}
+          isDeploying={isDeploying}
+        />
       </div>
 
       {prs && prs.length > 0 && (

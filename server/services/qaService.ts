@@ -31,6 +31,7 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
   try {
     // 1. Run local tests if available
     let localTestReport = "";
+    let localTestsFailed = false;
     if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
       // Ensure dependencies are installed before running tests
       try {
@@ -38,14 +39,16 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
         if (!hasNodeModules && fs.existsSync(path.join(project.normalizedFolderPath, "package.json"))) {
           console.log(`[QA] Installing dependencies for ${project.id}...`);
           // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-          await execAsync("npm install --legacy-peer-deps", { cwd: project.normalizedFolderPath, timeout: 120000 });
+          await execAsync("npm install --legacy-peer-deps", { cwd: project.normalizedFolderPath, timeout: 300000 }); // Increased to 5 mins
         }
       } catch (e) {
         console.error("[QA] Failed to install dependencies:", e);
         localTestReport += "Failed to install dependencies. Tests might fail.\n";
       }
 
-      localTestReport += await runLocalTests(project.normalizedFolderPath);
+      const testResult = await runLocalTests(project.normalizedFolderPath);
+      localTestReport += testResult.report;
+      localTestsFailed = testResult.failed;
     }
 
     let report = await pRetry(
@@ -68,7 +71,18 @@ Be thorough but concise. Provide actionable insights. Format your response as a 
 
 IMPORTANT: If the verdict is FAIL, you MUST include a line starting with "**Key Error:**" followed by a short, one-sentence summary of the main reason for failure. Place this in the Summary section.
 
-Always end with a clear PASS or FAIL verdict based on your analysis.`
+CRITICAL: You must end your response with exactly one of these two lines:
+VERDICT: PASS
+or
+VERDICT: FAIL
+
+Guidelines for Verdict:
+- PASS: If the project builds successfully (or has no build script) and has no CRITICAL security risks.
+- ABSOLUTELY DO NOT FAIL due to missing linting or testing scripts. These are optional. Treat them as warnings only.
+- FAIL: Only if there are confirmed build failures, critical syntax errors preventing execution, or severe security leaks (like exposed API keys).
+
+If the project has minor issues but is deployable, choose PASS.
+If the project has critical errors, build failures, or security risks that prevent deployment, choose FAIL.`
             },
             {
               role: "user",
@@ -112,11 +126,17 @@ Provide a comprehensive QA report.`
     );
 
     // Determine if QA passed based on the report content
-    // Also consider local test results if they exist
-    const localTestsFailed = localTestReport.includes("Result: FAIL");
-    
-    let passed = !report.toLowerCase().includes("fail") || 
-                   report.toLowerCase().includes("pass");
+    // We look for the explicit verdict line first
+    let passed = false;
+    if (report.includes("VERDICT: PASS")) {
+      passed = true;
+    } else if (report.includes("VERDICT: FAIL")) {
+      passed = false;
+    } else {
+      // Fallback for legacy/unstructured responses
+      passed = !report.toLowerCase().includes("verdict: fail") && 
+               (report.toLowerCase().includes("pass") || !report.toLowerCase().includes("fail"));
+    }
 
     if (localTestsFailed) {
       // Don't fail the whole QA just because local tests failed. 
@@ -154,13 +174,14 @@ Please try again later or check your project configuration.`,
   }
 }
 
-async function runLocalTests(folderPath: string): Promise<string> {
+async function runLocalTests(folderPath: string): Promise<{ report: string, failed: boolean }> {
   const packageJsonPath = path.join(folderPath, "package.json");
   if (!fs.existsSync(packageJsonPath)) {
-    return "No package.json found. Skipping local tests.";
+    return { report: "No package.json found. Skipping local tests.", failed: false };
   }
 
   let report = "Local Test Execution:\n";
+  let failed = false;
   
   try {
     const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
@@ -174,6 +195,7 @@ async function runLocalTests(folderPath: string): Promise<string> {
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
       } catch (e: any) {
         report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+        failed = true;
       }
     } else {
       report += "\n[Lint] No lint script found.\n";
@@ -187,6 +209,7 @@ async function runLocalTests(folderPath: string): Promise<string> {
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
       } catch (e: any) {
         report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+        failed = true;
       }
     } else {
       report += "\n[Tests] No test script found.\n";
@@ -200,12 +223,14 @@ async function runLocalTests(folderPath: string): Promise<string> {
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
       } catch (e: any) {
         report += `Output:\n${e.stdout}\n${e.stderr}\nResult: FAIL\n`;
+        failed = true;
       }
     }
 
   } catch (error) {
     report += `\nError running local tests: ${error instanceof Error ? error.message : String(error)}\n`;
+    failed = true;
   }
 
-  return report;
+  return { report, failed };
 }

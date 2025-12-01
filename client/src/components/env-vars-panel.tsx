@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Plus, Trash2, Eye, EyeOff, Wand2, Save, Key } from "lucide-react";
+import { ToastAction } from "@/components/ui/toast";
 
 interface EnvVar {
   key: string;
@@ -18,9 +19,11 @@ interface EnvVar {
 
 interface EnvVarsPanelProps {
   projectId: string;
+  onDeploy?: () => void;
+  isDeploying?: boolean;
 }
 
-export function EnvVarsPanel({ projectId }: EnvVarsPanelProps) {
+export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelProps) {
   const { toast } = useToast();
   const [showSecrets, setShowSecrets] = useState<Record<string, boolean>>({});
   const [newKey, setNewKey] = useState("");
@@ -45,7 +48,15 @@ export function EnvVarsPanel({ projectId }: EnvVarsPanelProps) {
           variant: "destructive" 
         });
       } else {
-        toast({ title: "Environment variables updated & synced" });
+        toast({ 
+          title: "Environment variables updated & synced",
+          description: onDeploy ? "Changes are live on cloud providers. You may want to redeploy." : "Changes are live on cloud providers.",
+          action: onDeploy ? (
+            <ToastAction altText="Redeploy" onClick={onDeploy} disabled={isDeploying}>
+              {isDeploying ? "Deploying..." : "Redeploy"}
+            </ToastAction>
+          ) : undefined,
+        });
       }
     },
     onError: () => {

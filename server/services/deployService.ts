@@ -8,13 +8,15 @@ import * as fs from "fs";
 import { cloneAndZipRepository } from "./githubService";
 import { analyzeZipProject } from "./zipAnalyzer";
 import { deployToVercel, syncEnvVarsToVercel } from "./vercelService";
+import { deployToRailway, syncEnvVarsToRailway } from "./railwayService";
 
 /**
  * Deploy Service - Handles project deployments
  * 
  * Supports:
  * - Vercel API deployments (when VERCEL_TOKEN is set)
- * - Real Render API deployments (when RENDER_API_TOKEN and renderServiceId are set)
+ * - Render API deployments (when RENDER_API_TOKEN is set)
+ * - Railway API deployments (when RAILWAY_TOKEN is set)
  * - Local Process Deployment (Real execution on local machine)
  */
 
@@ -315,7 +317,9 @@ async function handleCrash(projectId: string) {
  */
 async function triggerRenderDeploy(project: Project): Promise<{ deployId: string; status: string; url: string } | null> {
   // Check if Render API token and service ID are configured
-  const renderToken = process.env.RENDER_API_TOKEN;
+  const projectEnv = (project.envVars as Record<string, any>) || {};
+  const renderToken = projectEnv.RENDER_API_TOKEN?.value || process.env.RENDER_API_TOKEN;
+  
   if (!renderToken || !project.renderServiceId) {
     return null;
   }
@@ -335,6 +339,10 @@ async function triggerRenderDeploy(project: Project): Promise<{ deployId: string
     });
 
     if (!response.ok) {
+      if (response.status === 401) {
+        await logDeploy(project.id, "Deploy trigger failed: Invalid Render API Token (401). Please check your settings.");
+        return null;
+      }
       const errorText = await response.text();
       await logDeploy(project.id, `Deploy trigger failed: ${response.status} - ${errorText}`);
       return null;
@@ -435,16 +443,54 @@ async function pollRenderDeployStatus(project: Project, deployId: string, token:
 }
 
 /**
+ * Get the Render Owner ID (User or Team)
+ */
+async function getRenderOwnerId(token: string): Promise<{ ownerId: string | null; error?: string }> {
+  const baseUrl = process.env.RENDER_BASE_URL || "https://api.render.com/v1";
+  try {
+    const response = await fetch(`${baseUrl}/owners`, {
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/json",
+      },
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        return { ownerId: null, error: "Invalid Render API Token. Please check your API Key in the project settings." };
+      }
+      const errorText = await response.text();
+      console.error("Failed to fetch Render owners:", errorText);
+      return { ownerId: null, error: `Render API Error (${response.status}): ${errorText}` };
+    }
+
+    const data = await response.json() as any[];
+    // Return the first owner (usually the user themselves)
+    if (data && data.length > 0) {
+      return { ownerId: data[0].id };
+    }
+    return { ownerId: null, error: "No owners found for this Render account." };
+  } catch (error) {
+    const msg = error instanceof Error ? error.message : String(error);
+    console.error("Error fetching Render owner ID:", msg);
+    return { ownerId: null, error: `Network Error: ${msg}` };
+  }
+}
+
+/**
  * Create a new Web Service on Render
  */
-async function createRenderService(project: Project): Promise<{ serviceId: string; url: string; dashboardUrl: string } | null> {
-  const renderToken = process.env.RENDER_API_TOKEN;
-  if (!renderToken) return null;
+async function createRenderService(project: Project): Promise<{ success: boolean; serviceId?: string; url?: string; dashboardUrl?: string; error?: string }> {
+  // Prefer project-specific token if available, otherwise use global env var
+  const projectEnv = (project.envVars as Record<string, any>) || {};
+  const renderToken = projectEnv.RENDER_API_TOKEN?.value || process.env.RENDER_API_TOKEN;
+  
+  if (!renderToken) return { success: false, error: "Render API Token not configured" };
 
   // We can only deploy public GitHub repos for now
   if (project.sourceType !== "github") {
     await logDeploy(project.id, "Skipping Render service creation: Not a GitHub project");
-    return null;
+    return { success: false, error: "Only GitHub projects are supported for Render deployment" };
   }
 
   try {
@@ -452,15 +498,25 @@ async function createRenderService(project: Project): Promise<{ serviceId: strin
     
     const baseUrl = process.env.RENDER_BASE_URL || "https://api.render.com/v1";
     
+    // 0. Get Owner ID
+    const ownerResult = await getRenderOwnerId(renderToken);
+    if (!ownerResult.ownerId) {
+      await logDeploy(project.id, `Failed to retrieve Render Owner ID: ${ownerResult.error}`);
+      return { success: false, error: `Failed to retrieve Render Owner ID: ${ownerResult.error}` };
+    }
+    const ownerId = ownerResult.ownerId;
+
     // 1. Provision Database if needed (Mock for now)
     const dbEnvVars = await provisionDatabase(project);
 
     // 2. Create Service
+    // Correct structure: ownerId, type, repo, name are top-level. serviceDetails contains env specific config.
     const body = {
+      ownerId: ownerId,
+      type: "web_service",
+      name: project.name,
+      repo: project.sourceValue, // Must be https://github.com/user/repo
       serviceDetails: {
-        type: "web_service",
-        name: project.name,
-        repo: project.sourceValue, // Must be https://github.com/user/repo
         env: "node",
         region: "oregon", // Default
         buildCommand: "npm install && npm run build",
@@ -485,21 +541,23 @@ async function createRenderService(project: Project): Promise<{ serviceId: strin
     if (!response.ok) {
       const errorText = await response.text();
       await logDeploy(project.id, `Service creation failed: ${errorText}`);
-      return null;
+      return { success: false, error: `Render API Error: ${errorText}` };
     }
 
     const data = await response.json() as any;
     await logDeploy(project.id, `Service created successfully! ID: ${data.id}`);
     
     return {
+      success: true,
       serviceId: data.id,
-      url: data.serviceDetails.url,
+      url: data.serviceDetails?.url || "",
       dashboardUrl: data.dashboardUrl || `https://dashboard.render.com/d/${data.id}`,
     };
 
   } catch (error) {
-    await logDeploy(project.id, `Service creation error: ${error instanceof Error ? error.message : String(error)}`);
-    return null;
+    const msg = error instanceof Error ? error.message : String(error);
+    await logDeploy(project.id, `Service creation error: ${msg}`);
+    return { success: false, error: msg };
   }
 }
 
@@ -533,6 +591,53 @@ async function provisionDatabase(project: Project): Promise<Array<{ key: string;
     { key: "PGUSER", value: "user" },
     { key: "PGDATABASE", value: project.name.replace(/[^a-z0-9]/g, "_") },
   ];
+}
+
+/**
+ * Sync Env Vars to Render
+ */
+export async function syncEnvVarsToRender(project: Project): Promise<{ success: boolean; error?: string }> {
+  const projectEnv = (project.envVars as Record<string, any>) || {};
+  const renderToken = projectEnv.RENDER_API_TOKEN?.value || process.env.RENDER_API_TOKEN;
+  
+  if (!renderToken || !project.renderServiceId) {
+    return { success: true }; // Skip if not configured
+  }
+
+  try {
+    await logDeploy(project.id, "Syncing environment variables to Render...");
+    
+    const baseUrl = process.env.RENDER_BASE_URL || "https://api.render.com/v1";
+    const envVars = (project.envVars as Record<string, any>) || {};
+    
+    // Prepare env vars payload
+    const envVarList = Object.entries(envVars).map(([key, val]) => ({
+      key,
+      value: val.value
+    }));
+
+    // Render API requires PUT to replace all env vars
+    const response = await fetch(`${baseUrl}/services/${project.renderServiceId}/env-vars`, {
+      method: "PUT",
+      headers: {
+        "Authorization": `Bearer ${renderToken}`,
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(envVarList),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return { success: false, error: `Render Env Sync Failed: ${errorText}` };
+    }
+
+    await logDeploy(project.id, "Environment variables synced to Render successfully.");
+    return { success: true };
+
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
 }
 
 /**
@@ -583,68 +688,161 @@ export async function deployProject(project: Project): Promise<DeployResult> {
   }
 
   // 1. Try Vercel Deployment (if configured)
-  if (process.env.VERCEL_TOKEN) {
-    await logDeploy(project.id, "VERCEL_TOKEN detected. Attempting Vercel deployment...");
-    
-    // Sync Env Vars First
-    await logDeploy(project.id, "Syncing environment variables to Vercel...");
-    const syncResult = await syncEnvVarsToVercel(project);
-    
-    if (!syncResult.success) {
-      await logDeploy(project.id, `Env Var Sync Failed: ${syncResult.error}. Aborting deployment.`);
-      return {
-        success: false,
-        deployedUrl: null,
-        error: `Environment Variable Sync Failed: ${syncResult.error}`
-      };
-    }
-    await logDeploy(project.id, "Environment variables synced successfully.");
-
-    const vercelResult = await deployToVercel(project);
-    
-    if (vercelResult.success) {
-      await logDeploy(project.id, `Vercel deployment initiated! URL: ${vercelResult.url}`);
-      return {
-        success: true,
-        deployedUrl: vercelResult.url || null,
-        deployId: vercelResult.deployId,
-        deployStatus: vercelResult.status,
-      };
+  const target = project.deploymentTarget || "auto";
+  
+  // Check if we should try Vercel
+  const shouldTryVercel = target === "vercel" || (target === "auto" && process.env.VERCEL_TOKEN);
+  
+  if (shouldTryVercel) {
+    if (!process.env.VERCEL_TOKEN) {
+       if (target === "vercel") {
+         return { success: false, deployedUrl: null, error: "Vercel deployment selected but VERCEL_TOKEN is not configured." };
+       }
+       // If auto, we just skip to next provider
     } else {
-      // STRICT MODE: If Vercel is configured, we DO NOT fall back to local.
-      await logDeploy(project.id, `Vercel deployment failed: ${vercelResult.error}. Aborting (Vercel-only mode).`);
-      return {
-        success: false,
-        deployedUrl: null,
-        error: `Vercel Deployment Failed: ${vercelResult.error}`
-      };
+      await logDeploy(project.id, "Attempting Vercel deployment...");
+      
+      // Sync Env Vars First
+      await logDeploy(project.id, "Syncing environment variables to Vercel...");
+      const syncResult = await syncEnvVarsToVercel(project);
+      
+      if (!syncResult.success) {
+        await logDeploy(project.id, `Env Var Sync Failed: ${syncResult.error}. Aborting deployment.`);
+        return {
+          success: false,
+          deployedUrl: null,
+          error: `Environment Variable Sync Failed: ${syncResult.error}`
+        };
+      }
+      await logDeploy(project.id, "Environment variables synced successfully.");
+
+      const vercelResult = await deployToVercel(project);
+      
+      if (vercelResult.success) {
+        await logDeploy(project.id, `Vercel deployment initiated! URL: ${vercelResult.url}`);
+        return {
+          success: true,
+          deployedUrl: vercelResult.url || null,
+          deployId: vercelResult.deployId,
+          deployStatus: vercelResult.status,
+        };
+      } else {
+        // If explicitly selected, fail. If auto, maybe fall back? 
+        // Usually if Vercel is configured but fails, it's a real error, so we shouldn't silently fallback to Render.
+        await logDeploy(project.id, `Vercel deployment failed: ${vercelResult.error}. Aborting.`);
+        return {
+          success: false,
+          deployedUrl: null,
+          error: `Vercel Deployment Failed: ${vercelResult.error}`
+        };
+      }
     }
   }
 
-  // 2. If no Render Service ID, try to create one
-  if (!project.renderServiceId && process.env.RENDER_API_TOKEN) {
-    const newService = await createRenderService(project);
-    if (newService) {
-      await storage.updateProject(project.id, {
-        renderServiceId: newService.serviceId,
-        renderDashboardUrl: newService.dashboardUrl,
-        deployedUrl: newService.url,
-      });
-      // Refresh project object
-      const updated = await storage.getProject(project.id);
-      if (updated) project = updated;
+  // 2. Try Render Deployment
+  // If target is 'render' OR (target is 'auto' AND we haven't deployed yet)
+  // Note: If we are here, Vercel either wasn't attempted (no token/not selected) or failed (and we returned).
+  // Actually, if Vercel failed, we returned. So we are here only if Vercel was skipped.
+  
+  const projectEnv = (project.envVars as Record<string, any>) || {};
+  const renderToken = projectEnv.RENDER_API_TOKEN?.value || process.env.RENDER_API_TOKEN;
+  const shouldTryRender = target === "render" || (target === "auto" && renderToken);
+
+  if (shouldTryRender) {
+    if (!renderToken) {
+      if (target === "render") {
+        return { success: false, deployedUrl: null, error: "Render deployment selected but RENDER_API_TOKEN is not configured." };
+      }
+    } else {
+      // If no Render Service ID, try to create one
+      if (!project.renderServiceId) {
+        const createResult = await createRenderService(project);
+        if (createResult.success && createResult.serviceId) {
+          await storage.updateProject(project.id, {
+            renderServiceId: createResult.serviceId,
+            renderDashboardUrl: createResult.dashboardUrl,
+            deployedUrl: createResult.url,
+          });
+          // Refresh project object
+          const updated = await storage.getProject(project.id);
+          if (updated) project = updated;
+        } else {
+          // Failed to create service
+          if (target === "render") {
+             return { success: false, deployedUrl: null, error: createResult.error || "Failed to create Render service." };
+          }
+        }
+      }
+
+      // Try real Render deployment if configured
+      if (project.renderServiceId) {
+        // Sync Env Vars to Render
+        const syncResult = await syncEnvVarsToRender(project);
+        if (!syncResult.success) {
+          await logDeploy(project.id, `Render Env Sync Failed: ${syncResult.error}. Aborting deployment.`);
+          return {
+            success: false,
+            deployedUrl: null,
+            error: `Render Env Sync Failed: ${syncResult.error}`
+          };
+        }
+
+        const renderResult = await triggerRenderDeploy(project);
+        if (renderResult) {
+          return {
+            success: true,
+            deployedUrl: renderResult.url,
+            deployId: renderResult.deployId,
+            deployStatus: renderResult.status,
+          };
+        } else {
+           return { success: false, deployedUrl: null, error: "Failed to trigger Render deployment. Please check the logs for details." };
+        }
+      }
     }
   }
 
-  // Try real Render deployment if configured
-  const renderResult = await triggerRenderDeploy(project);
-  if (renderResult) {
-    return {
-      success: true,
-      deployedUrl: renderResult.url,
-      deployId: renderResult.deployId,
-      deployStatus: renderResult.status,
-    };
+  // 3. Try Railway Deployment (if configured)
+  const shouldTryRailway = target === "railway" || (target === "auto" && process.env.RAILWAY_TOKEN && !shouldTryRender && !shouldTryVercel);
+  // Note: Auto priority is Vercel > Render > Railway
+
+  if (shouldTryRailway) {
+    if (!process.env.RAILWAY_TOKEN) {
+       if (target === "railway") {
+         return { success: false, deployedUrl: null, error: "Railway deployment selected but RAILWAY_TOKEN is not configured." };
+       }
+    } else if (project.railwayServiceId) {
+      await logDeploy(project.id, "Attempting Railway deployment...");
+
+      // Sync Env Vars to Railway
+      const syncResult = await syncEnvVarsToRailway(project);
+      if (!syncResult.success) {
+        await logDeploy(project.id, `Railway Env Sync Failed: ${syncResult.error}. Aborting deployment.`);
+        return {
+          success: false,
+          deployedUrl: null,
+          error: `Railway Env Sync Failed: ${syncResult.error}`
+        };
+      }
+
+      const railwayResult = await deployToRailway(project);
+      if (railwayResult.success) {
+        await logDeploy(project.id, `Railway deployment initiated! URL: ${railwayResult.url}`);
+        return {
+          success: true,
+          deployedUrl: railwayResult.url || null,
+          deployId: railwayResult.deployId,
+          deployStatus: railwayResult.status || "deploying",
+        };
+      } else {
+        await logDeploy(project.id, `Railway deployment failed: ${railwayResult.error}`);
+        return {
+          success: false,
+          deployedUrl: null,
+          error: `Railway Deployment Failed: ${railwayResult.error}`
+        };
+      }
+    }
   }
 
   // Fallback: Local Process Deployment (Real execution)

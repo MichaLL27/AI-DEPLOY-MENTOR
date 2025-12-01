@@ -4,6 +4,10 @@ import type { Project } from "@shared/schema";
 import { openai } from "../lib/openai";
 import { exec } from "child_process";
 import * as util from "util";
+import { autoFixEnvVars } from "./envService";
+import { syncEnvVarsToRender } from "./deployService";
+import { syncEnvVarsToVercel } from "./vercelService";
+import { syncEnvVarsToRailway } from "./railwayService";
 
 const execAsync = util.promisify(exec);
 
@@ -86,6 +90,54 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 
     // Attempt Test Repair (Fix failing tests)
     await attemptTestRepair(folderPath, actions);
+
+    // --- ENV VARS AUTO-FIX & SYNC ---
+    try {
+      console.log(`[AutoFix] Detecting and fixing environment variables for ${project.id}...`);
+      const updatedEnvVars = await autoFixEnvVars(project);
+      const envCount = Object.keys(updatedEnvVars).length;
+      
+      if (envCount > 0) {
+        actions.push(`Detected and configured ${envCount} environment variables`);
+        
+        // Update project object in memory with new env vars for sync
+        const updatedProject = { ...project, envVars: updatedEnvVars };
+
+        // Sync to Vercel
+        if (process.env.VERCEL_TOKEN) {
+          const vResult = await syncEnvVarsToVercel(updatedProject);
+          if (vResult.success) {
+            actions.push("Synced environment variables to Vercel");
+          } else {
+            actions.push(`Failed to sync to Vercel: ${vResult.error}`);
+          }
+        }
+
+        // Sync to Render
+        if (process.env.RENDER_API_TOKEN && project.renderServiceId) {
+          const rResult = await syncEnvVarsToRender(updatedProject);
+          if (rResult.success) {
+            actions.push("Synced environment variables to Render");
+          } else {
+            actions.push(`Failed to sync to Render: ${rResult.error}`);
+          }
+        }
+
+        // Sync to Railway
+        if (process.env.RAILWAY_TOKEN && project.railwayServiceId) {
+          const rwResult = await syncEnvVarsToRailway(updatedProject);
+          if (rwResult.success) {
+            actions.push("Synced environment variables to Railway");
+          } else {
+            actions.push(`Failed to sync to Railway: ${rwResult.error}`);
+          }
+        }
+      }
+    } catch (e) {
+      console.error("[AutoFix] Env Var Auto-fix failed:", e);
+      actions.push("Failed to auto-configure environment variables");
+    }
+    // --------------------------------
 
     // Determine if ready for deploy
     const readyForDeploy = checkReadyForDeploy(projectType, folderPath);

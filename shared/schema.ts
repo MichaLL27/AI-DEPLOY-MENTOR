@@ -15,6 +15,9 @@ export const projectStatusValues = [
 
 export type ProjectStatus = (typeof projectStatusValues)[number];
 
+export const deploymentTargetValues = ["auto", "vercel", "render", "railway"] as const;
+export type DeploymentTarget = (typeof deploymentTargetValues)[number];
+
 export const sourceTypeValues = ["github", "replit", "zip", "other"] as const;
 export type SourceType = (typeof sourceTypeValues)[number];
 
@@ -28,6 +31,8 @@ export const projects = pgTable("projects", {
   deployedUrl: text("deployed_url"),
   renderServiceId: text("render_service_id"),
   renderDashboardUrl: text("render_dashboard_url"),
+  railwayServiceId: text("railway_service_id"),
+  railwayProjectId: text("railway_project_id"),
   lastDeployId: text("last_deploy_id"),
   lastDeployStatus: text("last_deploy_status"),
   deployLogs: text("deploy_logs"),
@@ -46,6 +51,7 @@ export const projects = pgTable("projects", {
   normalizedFolderPath: text("normalized_folder_path"),
   normalizedReport: text("normalized_report"),
   readyForDeploy: text("ready_for_deploy").default("false"),
+  deploymentTarget: text("deployment_target").default("auto").$type<DeploymentTarget>(),
   autoFixStatus: text("auto_fix_status").default("none"),
   autoFixReport: text("auto_fix_report"),
   autoFixedAt: timestamp("auto_fixed_at"),

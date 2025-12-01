@@ -4,7 +4,7 @@ import { storage } from "./storage";
 import { db } from "./db";
 import { insertProjectSchema } from "@shared/schema";
 import { runQaOnProject } from "./services/qaService";
-import { deployProject } from "./services/deployService";
+import { deployProject, syncEnvVarsToRender } from "./services/deployService";
 import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { generateIosWrapper } from "./services/mobileIosService";
 import { analyzeZipProject } from "./services/zipAnalyzer";
@@ -28,6 +28,7 @@ import { cloneAndZipRepository } from "./services/githubService";
 
 import { autoFixEnvVars, detectEnvVars } from "./services/envService";
 import { syncEnvVarsToVercel } from "./services/vercelService";
+import { syncEnvVarsToRailway } from "./services/railwayService";
 
 // Configure multer for ZIP uploads
 // On Vercel, we must use /tmp. On local, we can use uploads/
@@ -75,6 +76,15 @@ export async function registerRoutes(
   // Health check endpoint
   app.get("/api/health", (_req, res) => {
     res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
+  // GET /api/config/providers - Get configured providers
+  app.get("/api/config/providers", (_req, res) => {
+    res.json({
+      vercel: !!process.env.VERCEL_TOKEN,
+      render: !!process.env.RENDER_API_TOKEN,
+      railway: !!process.env.RAILWAY_TOKEN,
+    });
   });
 
   // GET /api/projects - List all projects
@@ -173,6 +183,38 @@ export async function registerRoutes(
       }
       console.error("Error creating project:", error);
       res.status(500).json({ error: "Failed to create project" });
+    }
+  });
+
+  // PATCH /api/projects/:id - Update project details
+  app.patch("/api/projects/:id", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const project = await storage.getProject(id);
+      
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Allow updating specific fields
+      const allowedUpdates = ["deploymentTarget", "name"];
+      const updates: any = {};
+      
+      for (const key of allowedUpdates) {
+        if (req.body[key] !== undefined) {
+          updates[key] = req.body[key];
+        }
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.json(project);
+      }
+
+      const updatedProject = await storage.updateProject(id, updates);
+      res.json(updatedProject);
+    } catch (error) {
+      console.error("Error updating project:", error);
+      res.status(500).json({ error: "Failed to update project" });
     }
   });
 
@@ -886,6 +928,16 @@ export async function registerRoutes(
         }
       }
 
+      // 3. Sync to Railway (if configured)
+      if (process.env.RAILWAY_TOKEN && project.railwayServiceId) {
+        const updatedProject = { ...project, envVars };
+        const syncResult = await syncEnvVarsToRailway(updatedProject as any);
+        
+        if (!syncResult.success) {
+          console.warn(`[EnvSync] Failed to sync to Railway: ${syncResult.error}`);
+        }
+      }
+
       res.json({ success: true });
     } catch (error) {
       console.error("Error updating env vars:", error);
@@ -901,6 +953,25 @@ export async function registerRoutes(
       if (!project) return res.status(404).json({ error: "Project not found" });
 
       const fixedVars = await autoFixEnvVars(project);
+
+      // Sync to Vercel if configured
+      if (process.env.VERCEL_TOKEN) {
+        const updatedProject = { ...project, envVars: fixedVars };
+        await syncEnvVarsToVercel(updatedProject as any);
+      }
+
+      // Sync to Render if configured
+      if (process.env.RENDER_API_TOKEN && project.renderServiceId) {
+        const updatedProject = { ...project, envVars: fixedVars };
+        await syncEnvVarsToRender(updatedProject as any);
+      }
+
+      // Sync to Railway if configured
+      if (process.env.RAILWAY_TOKEN && project.railwayServiceId) {
+        const updatedProject = { ...project, envVars: fixedVars };
+        await syncEnvVarsToRailway(updatedProject as any);
+      }
+
       res.json(fixedVars);
     } catch (error) {
       console.error("Env autofix error:", error);

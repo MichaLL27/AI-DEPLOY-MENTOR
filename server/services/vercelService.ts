@@ -81,6 +81,26 @@ export async function syncEnvVarsToVercel(project: Project): Promise<{ success: 
     const { envs } = await listRes.json() as { envs: any[] };
     
     // 3. Sync Logic
+    // A. Delete variables that are in Vercel but NOT in our DB
+    for (const vercelEnv of envs) {
+      // Only check production target vars to avoid deleting unrelated stuff if possible, 
+      // but usually we want to sync everything.
+      // If the key is NOT in our local envVars, delete it.
+      if (!envVars[vercelEnv.key]) {
+        console.log(`[Vercel] Deleting env var: ${vercelEnv.key}`);
+        const deleteRes = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env/${vercelEnv.id}`, {
+          method: "DELETE",
+          headers: { "Authorization": `Bearer ${token}` }
+        });
+        
+        if (!deleteRes.ok) {
+          console.error(`[Vercel] Failed to delete ${vercelEnv.key}:`, await deleteRes.text());
+          // We continue even if delete fails
+        }
+      }
+    }
+
+    // B. Create or Update variables from our DB
     for (const [key, localVar] of Object.entries(envVars)) {
       const existing = envs.find((e: any) => e.key === key && e.target.includes("production"));
       
