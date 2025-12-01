@@ -331,10 +331,52 @@ export async function registerRoutes(
   app.delete("/api/projects/:id", async (req, res) => {
     try {
       const { id } = req.params;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      // Delete project record
       const deleted = await storage.deleteProject(id);
       
-      if (!deleted) {
-        return res.status(404).json({ error: "Project not found" });
+      if (deleted) {
+        // Clean up file system resources
+        try {
+          const isVercel = process.env.VERCEL === "1";
+          
+          // 1. Delete Uploads
+          const uploadPath = isVercel 
+            ? path.join(os.tmpdir(), "uploads", "projects", id)
+            : path.join(process.cwd(), "uploads", "projects", id);
+            
+          if (fs.existsSync(uploadPath)) {
+            fs.rmSync(uploadPath, { recursive: true, force: true });
+          }
+
+          // 2. Delete Normalized Code
+          const normalizedPath = isVercel
+            ? path.join(os.tmpdir(), "normalized", id)
+            : path.join(process.cwd(), "normalized", id);
+
+          if (fs.existsSync(normalizedPath)) {
+            fs.rmSync(normalizedPath, { recursive: true, force: true });
+          }
+
+          // 3. Delete Temp Analysis
+          const tempAnalysisPath = isVercel
+            ? path.join(os.tmpdir(), "zip-analysis", id)
+            : path.join(process.cwd(), "tmp", "zip-analysis", id);
+
+          if (fs.existsSync(tempAnalysisPath)) {
+            fs.rmSync(tempAnalysisPath, { recursive: true, force: true });
+          }
+
+          console.log(`[Cleanup] Deleted files for project ${id}`);
+        } catch (err) {
+          console.error(`[Cleanup] Failed to clean up files for project ${id}:`, err);
+          // We don't fail the request if cleanup fails, as the DB record is gone
+        }
       }
       
       res.status(204).send();
@@ -479,7 +521,15 @@ export async function registerRoutes(
         fs.writeFileSync(storedPath, req.file.buffer);
       } else {
         // Disk storage (Local)
-        fs.renameSync(req.file.path, storedPath);
+        // Use copy + unlink instead of rename to avoid cross-device link errors
+        try {
+          fs.copyFileSync(req.file.path, storedPath);
+          fs.unlinkSync(req.file.path);
+        } catch (err) {
+          console.error("Error moving uploaded file:", err);
+          // Fallback to rename if copy fails (unlikely)
+          fs.renameSync(req.file.path, storedPath);
+        }
       }
 
       // Create project record
