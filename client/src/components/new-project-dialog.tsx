@@ -145,10 +145,23 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
   });
 
   const onSubmit = (data: InsertProject) => {
-    if (useZipUpload && selectedFile) {
-      zipUploadMutation.mutate(selectedFile);
+    createMutation.mutate(data);
+  };
+
+  const handleRegister = async () => {
+    if (useZipUpload) {
+      const isNameValid = await form.trigger("name");
+      if (isNameValid && selectedFile) {
+        zipUploadMutation.mutate(selectedFile);
+      } else if (!selectedFile) {
+        toast({
+          title: "File required",
+          description: "Please select a ZIP file to upload.",
+          variant: "destructive",
+        });
+      }
     } else {
-      createMutation.mutate(data);
+      form.handleSubmit(onSubmit)();
     }
   };
 
@@ -378,7 +391,8 @@ export function NewProjectDialog({ open, onOpenChange }: NewProjectDialogProps) 
                 Cancel
               </Button>
               <Button
-                type="submit"
+                type="button"
+                onClick={handleRegister}
                 disabled={useZipUpload ? (zipUploadMutation.isPending || !selectedFile) : createMutation.isPending}
                 data-testid="button-register-project"
               >
