@@ -1,5 +1,5 @@
 import { useQuery, useMutation } from "@tanstack/react-query";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import type { Project } from "@shared/schema";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -41,6 +41,7 @@ import {
   Terminal,
   AlertCircle,
   CheckCircle,
+  Trash2,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -50,6 +51,7 @@ import { EnvVarsPanel } from "@/components/env-vars-panel";
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
+  const [, setLocation] = useLocation();
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
   const [expandValidation, setExpandValidation] = useState(false);
@@ -224,6 +226,26 @@ export default function ProjectDetail() {
     onError: (error: Error) => {
       toast({
         title: "Failed to close PR",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const deleteProjectMutation = useMutation({
+    mutationFn: async () => {
+      await apiRequest("DELETE", `/api/projects/${id}`);
+    },
+    onSuccess: () => {
+      toast({
+        title: "Project deleted",
+        description: "The project has been successfully deleted.",
+      });
+      setLocation("/");
+    },
+    onError: (error: Error) => {
+      toast({
+        title: "Delete failed",
         description: error.message,
         variant: "destructive",
       });
@@ -803,6 +825,37 @@ export default function ProjectDetail() {
             )}
           </CardContent>
         </Card>
+      </div>
+
+      <div className="mt-8 border border-red-200 rounded-lg overflow-hidden dark:border-red-900/50">
+        <div className="bg-red-50 px-6 py-4 border-b border-red-200 dark:bg-red-900/10 dark:border-red-900/50">
+          <h3 className="text-lg font-medium text-red-900 dark:text-red-200">Danger Zone</h3>
+        </div>
+        <div className="p-6 bg-white dark:bg-slate-950 flex items-center justify-between">
+          <div>
+            <h4 className="text-sm font-medium text-slate-900 dark:text-slate-200">Delete this project</h4>
+            <p className="text-sm text-slate-500 mt-1">
+              Once you delete a project, there is no going back. Please be certain.
+            </p>
+          </div>
+          <Button
+            variant="destructive"
+            onClick={() => {
+              if (confirm("Are you sure you want to delete this project? This action cannot be undone.")) {
+                deleteProjectMutation.mutate();
+              }
+            }}
+            disabled={deleteProjectMutation.isPending}
+            data-testid="button-delete-project"
+          >
+            {deleteProjectMutation.isPending ? (
+              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+            ) : (
+              <Trash2 className="h-4 w-4 mr-2" />
+            )}
+            Delete Project
+          </Button>
+        </div>
       </div>
     </div>
   );
