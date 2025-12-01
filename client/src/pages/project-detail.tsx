@@ -81,13 +81,22 @@ export default function ProjectDetail() {
       const response = await apiRequest("POST", `/api/projects/${id}/run-qa`);
       return response.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      toast({
-        title: "QA completed",
-        description: "Quality checks have passed successfully.",
-      });
+      
+      if (data.status === "qa_failed") {
+        toast({
+          title: "QA failed",
+          description: "Quality checks failed. Please check the report.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "QA completed",
+          description: "Quality checks have passed successfully.",
+        });
+      }
     },
     onError: (error: Error) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });

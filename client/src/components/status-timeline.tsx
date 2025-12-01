@@ -39,14 +39,16 @@ function getStepState(
       if (autoFixStatus === "success" || readyForDeploy === "true") return "completed";
       if (autoFixStatus === "running") return "running";
       if (autoFixStatus === "failed") return "failed";
-      if (normalizedStatus === "success" && autoFixStatus === "none") return "current";
+      // If analysis is done, we are ready for fixing
+      if (normalizedStatus === "success") return "current";
       return "pending";
 
     case "qa":
       if (status === "qa_passed" || status === "deploying" || status === "deployed" || status === "deploy_failed") return "completed";
       if (status === "qa_running") return "running";
       if (status === "qa_failed") return "failed";
-      if (readyForDeploy === "true" && status === "registered") return "current";
+      // QA is next after fixing is done or skipped
+      if (autoFixStatus === "success" || readyForDeploy === "true") return "current";
       return "pending";
 
     case "deploy":
