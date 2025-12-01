@@ -23,32 +23,48 @@ function getStepState(
 
   switch (stepId) {
     case "build":
-      return "completed"; // Always completed if project exists
+      // Only completed if we have moved past registration/initial analysis
+      if (normalizedStatus === "success" || normalizedStatus === "failed") return "completed";
+      return "current";
 
     case "analysis":
       if (normalizedStatus === "success") return "completed";
       if (normalizedStatus === "failed") return "failed";
       // If we are in any later stage, it's completed
       if (status !== "registered" || autoFixStatus !== "none") return "completed";
-      return "current"; // Default start state
+      // If build is done (which is practically always true once we have a project), analysis is next
+      return "current";
 
     case "fixing":
       // If we are in QA or later stages, consider fixing "completed" (or skipped successfully)
       if (status === "qa_passed" || status === "qa_running" || status === "qa_failed" || status === "deploying" || status === "deployed") return "completed";
       
-      if (autoFixStatus === "success" || readyForDeploy === "true") return "completed";
+      if (autoFixStatus === "success") return "completed";
       if (autoFixStatus === "running") return "running";
       if (autoFixStatus === "failed") return "failed";
+      
       // If analysis is done, we are ready for fixing
-      if (normalizedStatus === "success") return "current";
+      if (normalizedStatus === "success") {
+        // Even if ready for deploy, we show as current so user can choose to run it
+        return "current";
+      }
       return "pending";
 
     case "qa":
-      if (status === "qa_passed" || status === "deploying" || status === "deployed" || status === "deploy_failed") return "completed";
+      // Check if QA actually failed based on report content, even if we moved past it
+      const qaFailed = project.qaReport?.includes("Status: FAILED") || project.qaReport?.includes("Result: FAIL");
+      
+      if (status === "qa_passed") return "completed";
+      if (status === "deploying" || status === "deployed" || status === "deploy_failed") {
+        // If we deployed anyway despite failure, show as failed but completed (maybe orange?)
+        // Or just keep it failed red to indicate the risk taken
+        if (qaFailed) return "failed";
+        return "completed";
+      }
       if (status === "qa_running") return "running";
       if (status === "qa_failed") return "failed";
       // QA is next after fixing is done or skipped
-      if (autoFixStatus === "success" || readyForDeploy === "true") return "current";
+      if (autoFixStatus === "success") return "current";
       return "pending";
 
     case "deploy":

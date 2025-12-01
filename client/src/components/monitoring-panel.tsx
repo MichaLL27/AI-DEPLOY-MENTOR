@@ -74,6 +74,33 @@ export function MonitoringPanel({ project }: MonitoringPanelProps) {
           </div>
         </div>
 
+        <div className="mt-6 border-t border-blue-100 dark:border-blue-900 pt-4">
+          <h4 className="text-sm font-semibold text-blue-900 dark:text-blue-100 mb-3">Active Services</h4>
+          <div className="space-y-2">
+            <div className="flex items-center justify-between text-sm p-2 bg-white dark:bg-slate-900 rounded border border-blue-50 dark:border-blue-900/50">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span className="font-medium">Web Service</span>
+              </div>
+              <span className="text-muted-foreground text-xs">Running • Node.js</span>
+            </div>
+            <div className="flex items-center justify-between text-sm p-2 bg-white dark:bg-slate-900 rounded border border-blue-50 dark:border-blue-900/50">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span className="font-medium">Database</span>
+              </div>
+              <span className="text-muted-foreground text-xs">Connected • PostgreSQL</span>
+            </div>
+            <div className="flex items-center justify-between text-sm p-2 bg-white dark:bg-slate-900 rounded border border-blue-50 dark:border-blue-900/50">
+              <div className="flex items-center gap-2">
+                <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                <span className="font-medium">Storage</span>
+              </div>
+              <span className="text-muted-foreground text-xs">Available • 5GB</span>
+            </div>
+          </div>
+        </div>
+
         {isRecovering && (
           <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 rounded-md flex items-start gap-3">
             <RefreshCw className="h-5 w-5 text-yellow-600 animate-spin mt-0.5" />

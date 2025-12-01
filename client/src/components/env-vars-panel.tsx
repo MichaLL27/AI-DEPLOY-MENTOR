@@ -33,11 +33,20 @@ export function EnvVarsPanel({ projectId }: EnvVarsPanelProps) {
 
   const updateMutation = useMutation({
     mutationFn: async (newVars: Record<string, EnvVar>) => {
-      await apiRequest("POST", `/api/projects/${projectId}/env`, newVars);
+      const res = await apiRequest("POST", `/api/projects/${projectId}/env`, newVars);
+      return res.json();
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: [`/api/projects/${projectId}/env`] });
-      toast({ title: "Environment variables updated" });
+      if (data.warning) {
+        toast({ 
+          title: "Saved locally but sync failed", 
+          description: data.warning,
+          variant: "destructive" 
+        });
+      } else {
+        toast({ title: "Environment variables updated & synced" });
+      }
     },
     onError: () => {
       toast({ title: "Failed to update environment variables", variant: "destructive" });

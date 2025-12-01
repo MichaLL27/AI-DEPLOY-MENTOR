@@ -72,7 +72,8 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       const hasNodeModules = fs.existsSync(path.join(folderPath, "node_modules"));
       if (!hasNodeModules && fs.existsSync(path.join(folderPath, "package.json"))) {
         console.log(`[AutoFix] Installing dependencies for ${project.id}...`);
-        await execAsync("npm install", { cwd: folderPath, timeout: 120000 });
+        // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
+        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 120000 });
         actions.push("Installed project dependencies");
       }
     } catch (e) {
@@ -82,6 +83,9 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 
     // Attempt Deep Code Repair (Fix syntax/build errors)
     await attemptCodeRepair(folderPath, actions);
+
+    // Attempt Test Repair (Fix failing tests)
+    await attemptTestRepair(folderPath, actions);
 
     // Determine if ready for deploy
     const readyForDeploy = checkReadyForDeploy(projectType, folderPath);
@@ -605,6 +609,102 @@ ${fileContent}`
     actions.push("Attempted AI code repair but failed.");
   }
 }
+
+/**
+ * Attempt to fix failing tests using OpenAI
+ */
+async function attemptTestRepair(
+  folderPath: string,
+  actions: string[]
+): Promise<void> {
+  // 1. Run tests
+  let errorOutput = "";
+  try {
+    // Check if it's an Angular project and adjust test command
+    const isAngular = fs.existsSync(path.join(folderPath, "angular.json"));
+    let testCommand = "npm test";
+    
+    if (isAngular) {
+      // For Angular, we need to ensure we run in CI mode (no watch, headless)
+      // We can try to pass arguments, but npm scripts might not forward them.
+      // Best bet is to try running ng directly if possible, or assume npm test is configured.
+      // But often npm test is just "ng test".
+      // Let's try to modify package.json temporarily or just run a timeout-bound test.
+      // Actually, let's try to run 'ng test' directly if we can find the binary, or use npx.
+      testCommand = "npx ng test --watch=false --browsers=ChromeHeadless";
+    }
+
+    await execAsync(testCommand, { cwd: folderPath, timeout: 60000 });
+    return; // Tests passed
+  } catch (e: any) {
+    errorOutput = e.stdout + "\n" + e.stderr;
+  }
+
+  if (!errorOutput) return;
+
+  // 2. Identify problematic test file
+  // Look for "at ... (src/app/app.spec.ts:21:55)" or similar
+  const fileMatch = errorOutput.match(/([a-zA-Z0-9_\-\/]+\.(spec\.ts|test\.ts|test\.js|spec\.js))/);
+  
+  if (!fileMatch) {
+    actions.push("Detected test failures but could not identify test file to fix.");
+    return;
+  }
+
+  const relativeFilePath = fileMatch[1];
+  // Sometimes the path in stack trace is absolute or relative to source root.
+  // We need to find the actual file.
+  // If it starts with src/, it's likely relative to project root.
+  let absoluteFilePath = path.join(folderPath, relativeFilePath);
+  
+  // If not found, try to search for it
+  if (!fs.existsSync(absoluteFilePath)) {
+     const foundFiles = findFiles(folderPath, path.basename(relativeFilePath));
+     if (foundFiles.length > 0) {
+       absoluteFilePath = foundFiles[0];
+     } else {
+       return;
+     }
+  }
+
+  // 3. Read file content
+  const fileContent = fs.readFileSync(absoluteFilePath, "utf-8");
+
+  // 4. Ask OpenAI to fix it
+  try {
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert test repair agent. You will be given a test file content and a failure message. You must output ONLY the fixed test file content. Do not include markdown formatting or explanations. If the test is checking for something that doesn't exist (like a wrong title), update the test to match reality or fix the expectation."
+        },
+        {
+          role: "user",
+          content: `File: ${relativeFilePath}
+Error:
+${errorOutput.slice(0, 1000)}
+
+Content:
+${fileContent}`
+        }
+      ]
+    });
+
+    const fixedContent = response.choices[0]?.message?.content;
+    if (fixedContent) {
+      // Strip markdown code blocks if present
+      const cleanContent = fixedContent.replace(/^```[a-z]*\n/, "").replace(/\n```$/, "");
+      
+      fs.writeFileSync(absoluteFilePath, cleanContent);
+      actions.push(`Repaired failing test in ${path.basename(absoluteFilePath)}`);
+    }
+  } catch (error) {
+    console.error("AI Test Repair failed:", error);
+    actions.push("Attempted AI test repair but failed.");
+  }
+}
+
 
 /**
  * Check if project is ready for deployment

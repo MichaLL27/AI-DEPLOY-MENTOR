@@ -27,6 +27,7 @@ import * as os from "os";
 import { cloneAndZipRepository } from "./services/githubService";
 
 import { autoFixEnvVars, detectEnvVars } from "./services/envService";
+import { syncEnvVarsToVercel } from "./services/vercelService";
 
 // Configure multer for ZIP uploads
 // On Vercel, we must use /tmp. On local, we can use uploads/
@@ -244,20 +245,9 @@ export async function registerRoutes(
       // Auto-fix if not already done or if it failed previously
       // This ensures we always test the best version of the code
       if (project.autoFixStatus !== "success") {
-        console.log(`[QA] Auto-fix not completed (status: ${project.autoFixStatus}). Running auto-fix before QA...`);
-        await storage.updateProject(id, { autoFixStatus: "running" });
-        try {
-          await autoFixProject(project);
-          // Refresh project state after fix
-          const fixedProject = await storage.getProject(id);
-          if (fixedProject) {
-            // Update local project reference
-            Object.assign(project, fixedProject);
-          }
-        } catch (err) {
-          console.error("[QA] Auto-fix failed during pre-QA check:", err);
-          // We continue to QA even if fix fails, so QA can report the issues
-        }
+        return res.status(400).json({ 
+          error: "Please run Auto-fix before running QA checks." 
+        });
       }
 
       // Update status to qa_running
@@ -294,7 +284,7 @@ export async function registerRoutes(
       }
 
       // Only allow deployment on qa_passed projects
-      if (!["qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
+      if (!["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status)) {
         return res.status(400).json({ 
           error: "Project must pass QA before deployment" 
         });
@@ -877,9 +867,28 @@ export async function registerRoutes(
       const { id } = req.params;
       const envVars = req.body; // Expecting Record<string, EnvVar>
       
+      const project = await storage.getProject(id);
+      if (!project) return res.status(404).json({ error: "Project not found" });
+
+      // 1. Update DB
       await storage.updateProject(id, { envVars });
+
+      // 2. Sync to Vercel (if configured)
+      if (process.env.VERCEL_TOKEN) {
+        // We need to pass the updated project object
+        const updatedProject = { ...project, envVars };
+        const syncResult = await syncEnvVarsToVercel(updatedProject as any);
+        
+        if (!syncResult.success) {
+          console.warn(`[EnvSync] Failed to sync to Vercel: ${syncResult.error}`);
+          // We return success: true because DB update worked, but include warning
+          return res.json({ success: true, warning: `Saved to DB but failed to sync to Vercel: ${syncResult.error}` });
+        }
+      }
+
       res.json({ success: true });
     } catch (error) {
+      console.error("Error updating env vars:", error);
       res.status(500).json({ error: "Failed to update env vars" });
     }
   });

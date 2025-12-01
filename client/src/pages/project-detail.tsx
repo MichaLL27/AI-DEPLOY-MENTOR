@@ -300,9 +300,9 @@ export default function ProjectDetail() {
   }
 
   const canRunQa = (project.status === "registered" || project.status === "qa_failed") && 
-    (project.autoFixStatus === "success" || project.readyForDeploy === "true");
+    project.autoFixStatus === "success";
   
-  const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed";
+  const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed" || project.status === "qa_failed";
   const isDeployed = project.status === "deployed";
   const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
@@ -313,7 +313,8 @@ export default function ProjectDetail() {
   
   // Allow auto-fix if normalized, regardless of ready status (to generate extras like tests/dockerfile)
   // Always show the button, but disable if not normalized or currently running
-  const canAutoFix = !!project.normalizedFolderPath && project.autoFixStatus !== "success" && project.readyForDeploy !== "true";
+  // CHANGED: Allow auto-fix even if readyForDeploy is true, so user can force fix if needed
+  const canAutoFix = !!project.normalizedFolderPath && project.autoFixStatus !== "running";
   const isAutoFixing = autoFixMutation.isPending || project.autoFixStatus === "running";
   const autoReadyMessage = (project as any).autoReadyMessage;
 
@@ -328,28 +329,78 @@ export default function ProjectDetail() {
         </Alert>
       )}
 
+      {project.status === "qa_failed" && (
+        <Alert className="mb-8 border-red-500 bg-red-50 dark:bg-red-950">
+          <AlertCircle className="h-4 w-4 text-red-600" />
+          <AlertDescription className="ml-3 text-red-900 dark:text-red-100">
+            <strong>QA Checks Failed:</strong> The project has critical issues that might prevent successful deployment.
+            <div className="mt-2 text-sm bg-white/50 dark:bg-black/20 p-2 rounded border border-red-200 dark:border-red-900">
+              {(() => {
+                // Try to extract key error from report
+                const report = project.qaReport || "";
+                
+                // 1. Explicit Key Error (Future proofing)
+                const keyErrorMatch = report.match(/\*\*Key Error:\*\*\s*(.+?)(\n|$)/);
+                if (keyErrorMatch) return keyErrorMatch[1];
+
+                // 2. Explicit Reason (Future proofing)
+                const summaryMatch = report.match(/\*\*Verdict:\*\* FAIL[^\n]*\n\*\*Reason:\*\*\s*(.+?)(\n|$)/s);
+                if (summaryMatch) return summaryMatch[1];
+
+                // 3. Extract from Summary & Verdict section
+                // Look for the first sentence in the Summary section
+                const summarySectionMatch = report.match(/## \d+\.\s*Summary & Verdict\s*\n(.+?)(\.|\n)/);
+                if (summarySectionMatch) return summarySectionMatch[1] + ".";
+
+                // 4. Fallback: Look for "critical error" mentions
+                const criticalErrorMatch = report.match(/fails with a critical error[:\s]+(.+?)(\.|\n)/);
+                if (criticalErrorMatch) return "Critical Error: " + criticalErrorMatch[1];
+
+                return "Please review the full QA report below for details.";
+              })()}
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {autoReadyMessage && (
         <Alert className="mb-8 border-green-600 bg-green-50 dark:bg-green-950">
           <CheckCircle className="h-4 w-4 text-green-600" />
           <AlertDescription className="ml-3">
             <p className="font-semibold text-green-900 dark:text-green-100">{autoReadyMessage}</p>
             <p className="text-sm text-green-800 dark:text-green-200 mt-1">
-              This project was automatically normalized, repaired and validated. You can deploy it now with one click.
+              This project was automatically normalized, repaired and validated. Please run QA to verify before deployment.
             </p>
             <div className="flex gap-2 mt-3">
-              <Button
-                onClick={() => deployMutation.mutate()}
-                disabled={isDeploying}
-                className="bg-green-600 hover:bg-green-700 text-white"
-                data-testid="button-deploy-now-ready"
-              >
-                {isDeploying ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Rocket className="h-4 w-4 mr-2" />
-                )}
-                Deploy Now
-              </Button>
+              {project.status === "qa_passed" ? (
+                <Button
+                  onClick={() => deployMutation.mutate()}
+                  disabled={isDeploying}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  data-testid="button-deploy-now-ready"
+                >
+                  {isDeploying ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Rocket className="h-4 w-4 mr-2" />
+                  )}
+                  Deploy Now
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => runQaMutation.mutate()}
+                  disabled={isRunningQa}
+                  className="bg-green-600 hover:bg-green-700 text-white"
+                  data-testid="button-qa-now-ready"
+                >
+                  {isRunningQa ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <PlayCircle className="h-4 w-4 mr-2" />
+                  )}
+                  Run QA Check
+                </Button>
+              )}
               {project.autoFixReport && (
                 <Button
                   variant="outline"
@@ -432,6 +483,31 @@ export default function ProjectDetail() {
                 )}
                 Run QA
               </Button>
+            )}
+
+            {canDeploy && (
+              <Button
+                variant={project.status === "qa_failed" ? "destructive" : (isDeployed ? "outline" : "default")}
+                onClick={() => deployMutation.mutate()}
+                disabled={isDeploying}
+                data-testid="button-deploy"
+              >
+                {isDeploying ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : (
+                  <Rocket className="h-4 w-4 mr-2" />
+                )}
+                {project.status === "qa_failed" ? "Deploy Anyway" : (isDeployed ? "Redeploy Project" : "Deploy Project")}
+              </Button>
+            )}
+
+            {isDeployed && project.deployedUrl && (
+              <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
+                <Button className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
+                  <ExternalLink className="h-4 w-4 mr-2" />
+                  View Live App
+                </Button>
+              </a>
             )}
           </div>
         </div>

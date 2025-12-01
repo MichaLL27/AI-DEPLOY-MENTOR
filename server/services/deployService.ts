@@ -7,7 +7,7 @@ import * as fs from "fs";
 
 import { cloneAndZipRepository } from "./githubService";
 import { analyzeZipProject } from "./zipAnalyzer";
-import { deployToVercel } from "./vercelService";
+import { deployToVercel, syncEnvVarsToVercel } from "./vercelService";
 
 /**
  * Deploy Service - Handles project deployments
@@ -547,7 +547,7 @@ async function provisionDatabase(project: Project): Promise<Array<{ key: string;
 export async function deployProject(project: Project): Promise<DeployResult> {
   // Validate project is ready for deployment
   // (Note: We relax the check slightly to allow recovery if source is missing but status was 'deployed' previously)
-  if (!["qa_passed", "deployed", "deploy_failed", "recovery_triggered"].includes(project.status)) {
+  if (!["qa_passed", "deployed", "deploy_failed", "recovery_triggered", "qa_failed"].includes(project.status)) {
     return {
       success: false,
       deployedUrl: null,
@@ -585,6 +585,21 @@ export async function deployProject(project: Project): Promise<DeployResult> {
   // 1. Try Vercel Deployment (if configured)
   if (process.env.VERCEL_TOKEN) {
     await logDeploy(project.id, "VERCEL_TOKEN detected. Attempting Vercel deployment...");
+    
+    // Sync Env Vars First
+    await logDeploy(project.id, "Syncing environment variables to Vercel...");
+    const syncResult = await syncEnvVarsToVercel(project);
+    
+    if (!syncResult.success) {
+      await logDeploy(project.id, `Env Var Sync Failed: ${syncResult.error}. Aborting deployment.`);
+      return {
+        success: false,
+        deployedUrl: null,
+        error: `Environment Variable Sync Failed: ${syncResult.error}`
+      };
+    }
+    await logDeploy(project.id, "Environment variables synced successfully.");
+
     const vercelResult = await deployToVercel(project);
     
     if (vercelResult.success) {

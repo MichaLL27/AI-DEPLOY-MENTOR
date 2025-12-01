@@ -38,6 +38,105 @@ async function getGithubRepoId(owner: string, repo: string): Promise<string | nu
   }
 }
 
+export async function syncEnvVarsToVercel(project: Project): Promise<{ success: boolean; error?: string }> {
+  const token = process.env.VERCEL_TOKEN;
+  if (!token) {
+    return { success: false, error: "VERCEL_TOKEN not configured" };
+  }
+
+  const sanitizedName = project.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/--+/g, '-').slice(0, 100);
+  const envVars = (project.envVars as Record<string, EnvVar>) || {};
+  
+  console.log(`[Vercel] Syncing env vars for ${sanitizedName}...`);
+
+  try {
+    // 1. Get Project ID
+    const getRes = await fetch(`https://api.vercel.com/v9/projects/${sanitizedName}`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    
+    if (!getRes.ok) {
+      if (getRes.status === 404) {
+        // Project doesn't exist yet, we can't sync. 
+        // This is fine if we haven't deployed yet, but if we are "syncing", we expect it to exist or be created.
+        // For now, let's assume we only sync if it exists. If not, ensureVercelProject will handle it during deploy.
+        return { success: true }; 
+      }
+      return { success: false, error: `Failed to fetch Vercel project: ${getRes.statusText}` };
+    }
+    
+    const vercelProject = await getRes.json();
+    const projectId = vercelProject.id;
+
+    // 2. List existing Vercel Env Vars
+    // Note: Vercel API pagination might be needed for > 20 vars, but for MVP we assume < 20
+    const listRes = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env`, {
+      headers: { "Authorization": `Bearer ${token}` }
+    });
+    
+    if (!listRes.ok) {
+      return { success: false, error: "Failed to list Vercel env vars" };
+    }
+    
+    const { envs } = await listRes.json() as { envs: any[] };
+    
+    // 3. Sync Logic
+    for (const [key, localVar] of Object.entries(envVars)) {
+      const existing = envs.find((e: any) => e.key === key && e.target.includes("production"));
+      
+      const body = {
+        key,
+        value: localVar.value,
+        type: localVar.isSecret ? "encrypted" : "plain",
+        target: ["production", "preview", "development"]
+      };
+
+      if (existing) {
+        // Update if value changed (we can't easily check value if encrypted, so we just update)
+        // Or we can just update always to be safe.
+        // Vercel requires ID to update.
+        console.log(`[Vercel] Updating env var: ${key}`);
+        const updateRes = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env/${existing.id}`, {
+          method: "PATCH",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+        
+        if (!updateRes.ok) {
+          console.error(`[Vercel] Failed to update ${key}:`, await updateRes.text());
+          return { success: false, error: `Failed to update env var ${key}` };
+        }
+      } else {
+        // Create
+        console.log(`[Vercel] Creating env var: ${key}`);
+        const createRes = await fetch(`https://api.vercel.com/v9/projects/${projectId}/env`, {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify(body)
+        });
+
+        if (!createRes.ok) {
+          console.error(`[Vercel] Failed to create ${key}:`, await createRes.text());
+          return { success: false, error: `Failed to create env var ${key}` };
+        }
+      }
+    }
+
+    console.log(`[Vercel] Env vars synced successfully.`);
+    return { success: true };
+
+  } catch (error) {
+    console.error("[Vercel] Sync error:", error);
+    return { success: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 async function ensureVercelProject(
   name: string, 
   envVars: any[], 
