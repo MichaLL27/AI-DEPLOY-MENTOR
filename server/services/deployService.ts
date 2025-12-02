@@ -115,6 +115,46 @@ async function restoreProjectSource(project: Project): Promise<Project | null> {
 }
 
 /**
+ * Restore project source from ZIP if missing
+ */
+async function restoreZipSource(project: Project): Promise<Project | null> {
+  if (project.sourceType !== "zip" || !project.zipStoredPath) {
+    return null;
+  }
+
+  if (!fs.existsSync(project.zipStoredPath)) {
+    await logDeploy(project.id, `Original ZIP file not found at: ${project.zipStoredPath}`);
+    return null;
+  }
+
+  await logDeploy(project.id, "Normalized source missing. Attempting to restore from original ZIP...");
+  
+  try {
+    // Re-analyze (which re-extracts and normalizes)
+    const analysis = await analyzeZipProject(project);
+    
+    const updatedProject = await storage.updateProject(project.id, {
+      zipAnalysisStatus: "success",
+      projectType: analysis.projectType,
+      projectValidity: analysis.projectValidity,
+      validationErrors: JSON.stringify(analysis.validationErrors),
+      normalizedStatus: analysis.normalizedStatus,
+      normalizedFolderPath: analysis.normalizedFolderPath,
+      normalizedReport: analysis.normalizedReport,
+      readyForDeploy: analysis.readyForDeploy ? "true" : "false",
+      zipAnalysisReport: analysis.analysisReport,
+    } as any);
+
+    await logDeploy(project.id, "Project source restored from ZIP successfully.");
+    return updatedProject;
+
+  } catch (error) {
+    await logDeploy(project.id, `Failed to restore project from ZIP: ${error instanceof Error ? error.message : String(error)}`);
+    return null;
+  }
+}
+
+/**
  * Deploy project locally by running it as a child process
  */
 async function deployToLocal(project: Project): Promise<DeployResult> {
@@ -677,12 +717,24 @@ export async function deployProject(project: Project): Promise<DeployResult> {
           error: "Project source not found and failed to restore from GitHub",
         };
       }
+    } else if (project.sourceType === "zip") {
+      // Try to restore from ZIP
+      const restored = await restoreZipSource(project);
+      if (restored) {
+        project = restored;
+      } else {
+         return {
+            success: false,
+            deployedUrl: null,
+            error: "Project source not found. The original ZIP file is missing or corrupt. Please re-upload the project.",
+          };
+      }
     } else {
-       // For ZIP uploads, we can't restore if the file is gone
+       // For other types (if any), we can't restore
        return {
           success: false,
           deployedUrl: null,
-          error: "Project source not found (ZIP file missing)",
+          error: "Project source not found (Normalized folder missing)",
         };
     }
   }

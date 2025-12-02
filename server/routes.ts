@@ -261,6 +261,9 @@ export async function registerRoutes(
       if (project.sourceType === "zip" || project.sourceType === "github") {
          console.log(`[QA] Re-analyzing project ${id} to ensure correct classification...`);
          try {
+            // Log to UI so user sees what's happening
+            await storage.updateProject(id, { qaLogs: `[${new Date().toISOString()}] Re-analyzing project structure to ensure correct classification...\n` });
+
             const analysis = await analyzeZipProject(project);
             
             // Update project with new analysis results

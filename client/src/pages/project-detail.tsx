@@ -57,6 +57,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
@@ -68,12 +77,21 @@ export default function ProjectDetail() {
   const [expandAutoFix, setExpandAutoFix] = useState(false);
   const [expandDeployLogs, setExpandDeployLogs] = useState(false);
   const [expandFiles, setExpandFiles] = useState(false);
+  
+  // Dialog states
+  const [showAutoFixDialog, setShowAutoFixDialog] = useState(false);
+  const [showQaDialog, setShowQaDialog] = useState(false);
 
   const { data: project, isLoading, error } = useQuery<Project>({
     queryKey: ["/api/projects", id],
     refetchInterval: (query) => {
       const data = query.state.data;
+      // Poll if backend says running
       if (data?.status === "deploying" || data?.status === "qa_running" || data?.autoFixStatus === "running") {
+        return 1000;
+      }
+      // Also poll if dialogs are open (to catch the start of the process and live logs)
+      if (showAutoFixDialog || showQaDialog) {
         return 1000;
       }
       return false;
@@ -112,12 +130,15 @@ export default function ProjectDetail() {
 
   const runQaMutation = useMutation({
     mutationFn: async () => {
+      setShowQaDialog(true);
       const response = await apiRequest("POST", `/api/projects/${id}/run-qa`);
       return response.json();
     },
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
+      
+      // Dialog stays open to show results
       
       if (data.status === "qa_failed") {
         toast({
@@ -126,9 +147,15 @@ export default function ProjectDetail() {
           variant: "destructive",
         });
       } else {
+        // Check if fixes were applied
+        const fixes = data.qaReport?.match(/\[QA Auto-Fix\] Applied (\d+) fixes/);
+        const fixCount = fixes ? fixes[1] : 0;
+        
         toast({
-          title: "QA completed",
-          description: "Quality checks have passed successfully.",
+          title: fixCount > 0 ? `QA Passed with ${fixCount} Auto-Fixes` : "QA completed",
+          description: fixCount > 0 
+            ? "Issues were detected and automatically repaired by AI." 
+            : "Quality checks have passed successfully.",
         });
       }
     },
@@ -213,6 +240,7 @@ export default function ProjectDetail() {
 
   const autoFixMutation = useMutation({
     mutationFn: async () => {
+      setShowAutoFixDialog(true);
       const response = await apiRequest("POST", `/api/projects/${id}/auto-fix`);
       return response.json();
     },
@@ -220,10 +248,21 @@ export default function ProjectDetail() {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
       queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
       queryClient.invalidateQueries({ queryKey: [`/api/projects/${id}/prs`] });
-      toast({
-        title: "Auto-fix completed",
-        description: data.readyForDeploy ? "Project is now ready for deployment!" : "Project was fixed. Check the report.",
-      });
+      
+      // Dialog stays open to show results
+
+      if (data.autoFixStatus === "failed") {
+        toast({
+          title: "Auto-fix failed",
+          description: "The auto-fix process encountered errors. Check the report for details.",
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Auto-fix completed",
+          description: data.readyForDeploy ? "Project is now ready for deployment!" : "Project was fixed. Check the report.",
+        });
+      }
     },
     onError: (error: Error) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
@@ -1095,6 +1134,229 @@ export default function ProjectDetail() {
           </Button>
         </div>
       </div>
+
+      {/* Auto-Fix Dialog */}
+      <Dialog open={showAutoFixDialog} onOpenChange={setShowAutoFixDialog}>
+        <DialogContent className="sm:max-w-[600px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Wand2 className="h-5 w-5 text-purple-600" />
+              Auto-Fix Project
+            </DialogTitle>
+            <DialogDescription>
+              AI-powered analysis and repair of your project structure and code.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {isAutoFixing ? (
+              <div className="flex flex-col space-y-4">
+                <div className="flex items-center justify-center py-4">
+                   <div className="relative">
+                      <div className="absolute inset-0 bg-purple-500/20 blur-xl rounded-full animate-pulse"></div>
+                      <Loader2 className="h-12 w-12 text-purple-600 animate-spin relative z-10" />
+                   </div>
+                </div>
+                <p className="text-center text-lg font-medium animate-pulse">Analyzing and fixing issues...</p>
+                
+                <div className="bg-black rounded-md p-4 h-64 overflow-y-auto font-mono text-xs text-green-400 border border-slate-800 shadow-inner custom-scrollbar">
+                   <div className="flex items-center gap-2 text-slate-500 mb-2 pb-2 border-b border-slate-900">
+                      <Terminal className="h-3 w-3" />
+                      <span>Auto-Fix Logs</span>
+                   </div>
+                   <pre className="whitespace-pre-wrap">{project.autoFixLogs || "Initializing..."}</pre>
+                   <span className="animate-pulse">_</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className={`p-4 rounded-lg border ${project.autoFixStatus === 'success' ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-900' : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-900'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {project.autoFixStatus === 'success' ? (
+                      <CheckCircle className="h-5 w-5 text-green-600" />
+                    ) : (
+                      <AlertCircle className="h-5 w-5 text-red-600" />
+                    )}
+                    <h3 className="font-semibold">
+                      {project.autoFixStatus === 'success' ? 'Auto-fix Completed Successfully' : 'Auto-fix Failed'}
+                    </h3>
+                  </div>
+                  <p className="text-sm opacity-90">
+                    {project.readyForDeploy ? "Your project is now ready for deployment." : "Some issues were fixed, but manual intervention might be needed."}
+                  </p>
+                </div>
+
+                <ScrollArea className="h-[300px] rounded-md border p-4">
+                  <h4 className="text-sm font-medium mb-3">Actions Taken:</h4>
+                  <div className="space-y-2">
+                    {project.autoFixReport?.split('\n').map((line, i) => {
+                      if (line.trim().startsWith('•')) {
+                        return (
+                          <div key={i} className="flex items-start gap-2 text-sm">
+                            <Check className="h-4 w-4 text-green-500 mt-0.5 shrink-0" />
+                            <span>{line.replace('•', '').trim()}</span>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })}
+                    {!project.autoFixReport && <p className="text-sm text-muted-foreground">No report available.</p>}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowAutoFixDialog(false)}
+              disabled={isAutoFixing}
+            >
+              Close
+            </Button>
+            {!isAutoFixing && project.autoFixStatus === 'success' && (
+              <Button 
+                onClick={() => {
+                  setShowAutoFixDialog(false);
+                  runQaMutation.mutate();
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                Proceed to QA
+                <PlayCircle className="ml-2 h-4 w-4" />
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* QA Dialog */}
+      <Dialog open={showQaDialog} onOpenChange={setShowQaDialog}>
+        <DialogContent className="sm:max-w-[700px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-blue-600" />
+              Quality Assurance Check
+            </DialogTitle>
+            <DialogDescription>
+              Running comprehensive tests and AI analysis on your codebase.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="py-4">
+            {isRunningQa ? (
+              <div className="flex flex-col space-y-4">
+                <div className="flex items-center justify-center py-4">
+                   <div className="relative">
+                      <div className="absolute inset-0 bg-blue-500/20 blur-xl rounded-full animate-pulse"></div>
+                      <Loader2 className="h-12 w-12 text-blue-600 animate-spin relative z-10" />
+                   </div>
+                </div>
+                <p className="text-center text-lg font-medium animate-pulse">Running QA Checks...</p>
+                
+                <div className="bg-black rounded-md p-4 h-64 overflow-y-auto font-mono text-xs text-blue-400 border border-slate-800 shadow-inner custom-scrollbar">
+                   <div className="flex items-center gap-2 text-slate-500 mb-2 pb-2 border-b border-slate-900">
+                      <Terminal className="h-3 w-3" />
+                      <span>QA Execution Logs</span>
+                   </div>
+                   <pre className="whitespace-pre-wrap">{project.qaLogs || "Initializing..."}</pre>
+                   <span className="animate-pulse">_</span>
+                </div>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className={`p-4 rounded-lg border ${project.status === 'qa_passed' ? 'bg-green-50 border-green-200 dark:bg-green-900/20 dark:border-green-900' : 'bg-red-50 border-red-200 dark:bg-red-900/20 dark:border-red-900'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    {project.status === 'qa_passed' ? (
+                      <CheckCircle className="h-6 w-6 text-green-600" />
+                    ) : (
+                      <AlertCircle className="h-6 w-6 text-red-600" />
+                    )}
+                    <div>
+                      <h3 className="font-semibold text-lg">
+                        {project.status === 'qa_passed' ? 'QA Passed' : 'QA Failed'}
+                      </h3>
+                      {project.qaReport?.includes("[QA Auto-Fix]") && (
+                         <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full dark:bg-blue-900 dark:text-blue-200">
+                           Auto-Healed
+                         </span>
+                      )}
+                    </div>
+                  </div>
+                  <p className="text-sm opacity-90">
+                    {project.status === 'qa_passed' 
+                      ? "Your project passed all quality checks and is ready for deployment." 
+                      : "Critical issues were found. Please review the report below."}
+                  </p>
+                </div>
+
+                <ScrollArea className="h-[350px] rounded-md border p-4 bg-slate-50 dark:bg-slate-950">
+                  <div className="space-y-4">
+                    {/* Try to parse and highlight sections */}
+                    {project.qaReport?.split('\n').map((line, i) => {
+                      // Highlight Headers
+                      if (line.startsWith('#') || line.endsWith(':')) {
+                        return <h4 key={i} className="font-bold mt-4 mb-2 text-primary">{line.replace(/#/g, '')}</h4>;
+                      }
+                      // Highlight Errors
+                      if (line.toLowerCase().includes('error') || line.toLowerCase().includes('fail')) {
+                         return <p key={i} className="text-red-600 dark:text-red-400 font-medium text-sm py-1">{line}</p>;
+                      }
+                      // Highlight Success/Pass
+                      if (line.toLowerCase().includes('pass') || line.toLowerCase().includes('success')) {
+                         return <p key={i} className="text-green-600 dark:text-green-400 font-medium text-sm py-1">{line}</p>;
+                      }
+                      // Highlight Auto-Fixes
+                      if (line.includes('[QA Auto-Fix]')) {
+                         return <div key={i} className="bg-blue-50 dark:bg-blue-900/20 p-2 rounded border border-blue-200 dark:border-blue-800 my-2">
+                           <p className="text-blue-700 dark:text-blue-300 font-semibold text-sm">{line}</p>
+                         </div>;
+                      }
+                      // Default
+                      return <p key={i} className="text-sm text-muted-foreground whitespace-pre-wrap">{line}</p>;
+                    })}
+                  </div>
+                </ScrollArea>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button 
+              variant="outline" 
+              onClick={() => setShowQaDialog(false)}
+              disabled={isRunningQa}
+            >
+              Close
+            </Button>
+            {!isRunningQa && project.status === 'qa_failed' && (
+              <Button 
+                onClick={() => {
+                  setShowQaDialog(false);
+                  autoFixMutation.mutate();
+                }}
+                className="bg-purple-600 hover:bg-purple-700 text-white"
+              >
+                <Wand2 className="mr-2 h-4 w-4" />
+                Attempt AI Fix
+              </Button>
+            )}
+            {!isRunningQa && project.status === 'qa_passed' && (
+              <Button 
+                onClick={() => {
+                  setShowQaDialog(false);
+                  deployMutation.mutate();
+                }}
+                className="bg-green-600 hover:bg-green-700 text-white"
+              >
+                Proceed to Deploy
+                <Rocket className="ml-2 h-4 w-4" />
+              </Button>
+            )}
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

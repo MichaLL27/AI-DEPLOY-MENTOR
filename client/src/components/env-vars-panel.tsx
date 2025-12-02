@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Plus, Trash2, Eye, EyeOff, Wand2, Save, Key } from "lucide-react";
+import { Loader2, Plus, Trash2, Eye, EyeOff, Wand2, Save, Key, Edit2, X } from "lucide-react";
 import { ToastAction } from "@/components/ui/toast";
 
 interface EnvVar {
@@ -29,6 +29,7 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
   const [newKey, setNewKey] = useState("");
   const [newValue, setNewValue] = useState("");
   const [newIsSecret, setNewIsSecret] = useState(false);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
 
   const { data: envVars = {}, isLoading } = useQuery<Record<string, EnvVar>>({
     queryKey: [`/api/projects/${projectId}/env`],
@@ -58,6 +59,11 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
           ) : undefined,
         });
       }
+      // Reset form
+      setNewKey("");
+      setNewValue("");
+      setNewIsSecret(false);
+      setEditingKey(null);
     },
     onError: () => {
       toast({ title: "Failed to update environment variables", variant: "destructive" });
@@ -78,7 +84,7 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
     },
   });
 
-  const handleAdd = () => {
+  const handleSave = () => {
     if (!newKey) return;
     const updated = {
       ...envVars,
@@ -90,6 +96,20 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
       },
     };
     updateMutation.mutate(updated);
+  };
+
+  const handleEdit = (env: EnvVar) => {
+    setEditingKey(env.key);
+    setNewKey(env.key);
+    setNewValue(env.value);
+    setNewIsSecret(env.isSecret);
+    // Scroll to top
+    const formElement = document.getElementById("env-form");
+    if (formElement) formElement.scrollIntoView({ behavior: "smooth" });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingKey(null);
     setNewKey("");
     setNewValue("");
     setNewIsSecret(false);
@@ -140,15 +160,18 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Add New Variable Form */}
-            <div className="flex gap-3 items-end bg-slate-50 dark:bg-slate-950 p-4 rounded-lg border">
+            {/* Add/Edit Variable Form */}
+            <div id="env-form" className={`flex gap-3 items-end p-4 rounded-lg border transition-colors ${editingKey ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'bg-slate-50 dark:bg-slate-950'}`}>
               <div className="flex-1 space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">Key</label>
+                <label className="text-xs font-medium text-muted-foreground">
+                  {editingKey ? "Editing Key" : "New Key"}
+                </label>
                 <Input
                   placeholder="e.g. API_KEY"
                   value={newKey}
                   onChange={(e) => setNewKey(e.target.value.toUpperCase())}
                   className="font-mono"
+                  disabled={!!editingKey} // Disable key editing when updating
                 />
               </div>
               <div className="flex-[2] space-y-2">
@@ -172,10 +195,23 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
                   {newIsSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </Button>
               </div>
-              <Button onClick={handleAdd} disabled={!newKey}>
-                <Plus className="h-4 w-4 mr-2" />
-                Add
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={handleSave} disabled={!newKey || updateMutation.isPending}>
+                  {updateMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : editingKey ? (
+                    <Save className="h-4 w-4 mr-2" />
+                  ) : (
+                    <Plus className="h-4 w-4 mr-2" />
+                  )}
+                  {editingKey ? "Update" : "Add"}
+                </Button>
+                {editingKey && (
+                  <Button variant="ghost" onClick={handleCancelEdit} size="icon">
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
             </div>
 
             {/* Variables Table */}
@@ -198,7 +234,7 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
                     </TableRow>
                   ) : (
                     envList.map((env) => (
-                      <TableRow key={env.key}>
+                      <TableRow key={env.key} className={editingKey === env.key ? "bg-blue-50/50 dark:bg-blue-900/10" : ""}>
                         <TableCell className="font-mono font-medium">{env.key}</TableCell>
                         <TableCell className="font-mono text-sm">
                           <div className="flex items-center gap-2">
@@ -236,14 +272,24 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleDelete(env.key)}
-                            className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleEdit(env)}
+                              className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                            >
+                              <Edit2 className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => handleDelete(env.key)}
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </TableCell>
                       </TableRow>
                     ))

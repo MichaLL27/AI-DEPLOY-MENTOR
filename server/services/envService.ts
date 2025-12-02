@@ -94,12 +94,15 @@ function generateValue(key: string): string {
   if (lower.includes("database_url") || lower.includes("db_url")) {
     return "postgres://user:password@localhost:5432/dbname"; // Placeholder
   }
+  if (lower.includes("api_base_url") || lower.includes("api_url")) {
+    return "http://localhost:3000/api";
+  }
   if (lower.includes("url") || lower.includes("uri")) {
     return "http://localhost:3000";
   }
   
   // Generate random secret
-  return crypto.randomBytes(16).toString("hex");
+  return crypto.randomBytes(32).toString("hex");
 }
 
 export async function autoFixEnvVars(project: Project): Promise<Record<string, EnvVar>> {

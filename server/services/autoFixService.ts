@@ -1,3 +1,4 @@
+import { storage } from "../storage";
 import * as fs from "fs";
 import * as path from "path";
 import type { Project } from "@shared/schema";
@@ -17,13 +18,42 @@ export interface AutoFixResult {
   readyForDeploy: boolean;
 }
 
+async function logAutoFix(projectId: string, message: string) {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] ${message}\n`;
+  console.log(`[AutoFix] ${message}`);
+  
+  try {
+    const project = await storage.getProject(projectId);
+    if (project) {
+      const currentLogs = project.autoFixLogs || "";
+      await storage.updateProject(projectId, {
+        autoFixLogs: currentLogs + logLine
+      });
+    }
+  } catch (e) {
+    console.error("Failed to write auto-fix log:", e);
+  }
+}
+
 /**
  * Automatically fix common project issues
  */
 export async function autoFixProject(project: Project): Promise<AutoFixResult> {
   const actions: string[] = [];
+  
+  // Helper to log and record action
+  const addAction = async (msg: string) => {
+    actions.push(msg);
+    await logAutoFix(project.id, msg);
+  };
+
+  // Clear previous logs
+  await storage.updateProject(project.id, { autoFixLogs: "" });
+  await logAutoFix(project.id, "Starting auto-fix process...");
 
   if (!project.normalizedFolderPath) {
+    await logAutoFix(project.id, "Error: No normalized folder path found.");
     return {
       autoFixStatus: "failed",
       autoFixReport: "No normalized folder path found. Run normalization first.",
@@ -34,108 +64,194 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
   const folderPath = project.normalizedFolderPath;
 
   if (!fs.existsSync(folderPath)) {
+    await logAutoFix(project.id, `Error: Normalized folder missing at ${folderPath}`);
+    // Try to recover if it's a ZIP project and we have the zip file
+    if (project.sourceType === "zip" && project.zipStoredPath && fs.existsSync(project.zipStoredPath)) {
+       return {
+        autoFixStatus: "failed",
+        autoFixReport: `Project files not found on this server. If you are running locally but connected to a remote DB, this is expected. Please re-upload the project locally. (Path: ${folderPath})`,
+        readyForDeploy: false,
+      };
+    }
+
     return {
       autoFixStatus: "failed",
-      autoFixReport: `Normalized folder does not exist: ${folderPath}`,
+      autoFixReport: `Normalized folder does not exist: ${folderPath}\n\n**Reason:** The project files are missing from this server.\n**Solution:**\n1. If this is a ZIP project, please delete it and upload it again.\n2. If this is a GitHub project, the system will attempt to re-clone it during deployment.`,
       readyForDeploy: false,
     };
   }
 
   try {
     const projectType = project.projectType || "unknown";
+    await logAutoFix(project.id, `Detected project type: ${projectType}`);
 
     switch (projectType) {
       case "static_web":
-        await fixStaticWeb(folderPath, actions);
+        await fixStaticWeb(folderPath, addAction);
         break;
       case "node_backend":
-        await fixNodeBackend(folderPath, project.name, actions);
+        // Check if it's NestJS
+        if (fs.existsSync(path.join(folderPath, "nest-cli.json")) || 
+            fs.existsSync(path.join(folderPath, "tsconfig.build.json"))) {
+          await logAutoFix(project.id, "Detected NestJS project structure");
+          await fixNestProject(folderPath, addAction);
+        } else {
+          await fixNodeBackend(folderPath, project.name, addAction);
+        }
         break;
       case "nextjs":
       case "react_spa":
-        await fixReactProject(folderPath, projectType, actions);
+        await fixReactProject(folderPath, projectType, addAction);
         break;
       default:
-        actions.push("No specific auto-fixes available for this project type.");
+        await addAction("No specific framework auto-fixes, falling back to generic Node.js repairs.");
     }
 
     // Generate Dockerfile if missing
-    await generateDockerfile(folderPath, projectType, actions);
+    await generateDockerfile(folderPath, projectType, addAction);
 
     // Generate .env.example if missing
-    await generateEnvExample(folderPath, actions);
+    await generateEnvExample(folderPath, addAction);
 
     // Generate tsconfig.json if missing and needed
-    await generateTsConfig(folderPath, projectType, actions);
+    await generateTsConfig(folderPath, projectType, addAction);
 
     // Generate basic tests if missing
-    await generateBasicTests(folderPath, projectType, actions);
+    await generateBasicTests(folderPath, projectType, addAction);
 
     // Ensure dependencies are installed before code repair
     try {
       const hasNodeModules = fs.existsSync(path.join(folderPath, "node_modules"));
       if (!hasNodeModules && fs.existsSync(path.join(folderPath, "package.json"))) {
-        console.log(`[AutoFix] Installing dependencies for ${project.id}...`);
+        await logAutoFix(project.id, "Installing dependencies (this may take a minute)...");
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 120000 });
-        actions.push("Installed project dependencies");
+        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 180000 });
+        await addAction("Installed project dependencies");
       }
     } catch (e) {
       console.error("[AutoFix] Failed to install dependencies:", e);
-      actions.push("Failed to install dependencies");
+      await addAction("Failed to install dependencies");
     }
 
-    // Attempt Deep Code Repair (Fix syntax/build errors)
-    await attemptCodeRepair(folderPath, actions);
+    // --- SMART REPAIR SYSTEM (ITERATIVE LOOP) ---
+    // Instead of running isolated fixes, we now enter a Build-Fix-Retry loop
+    // This mimics a human engineer: Try build -> See error -> Fix specific error -> Retry
+    
+    let buildSuccess = false;
+    const maxRetries = 3;
 
-    // Attempt Test Repair (Fix failing tests)
-    await attemptTestRepair(folderPath, actions);
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      await logAutoFix(project.id, `Build & Repair Cycle: Attempt ${attempt}/${maxRetries}`);
+      
+      // 1. Try to build
+      try {
+        await execAsync("npm run build", { cwd: folderPath, timeout: 60000 });
+        await addAction("Build successful!");
+        buildSuccess = true;
+        break; // Exit loop if build succeeds
+      } catch (e: any) {
+        const errorOutput = (e.stdout || "") + "\n" + (e.stderr || "");
+        await logAutoFix(project.id, `Build failed. Analyzing error...`);
+        
+        // 2. Analyze and Fix based on error signature
+        const fixApplied = await applyTargetedFix(folderPath, errorOutput, addAction);
+        
+        if (!fixApplied) {
+          // If no specific infrastructure fix found, try AI Code Repair
+          await logAutoFix(project.id, "No infrastructure error detected. Attempting AI code repair...");
+          await attemptCodeRepair(folderPath, addAction);
+        }
+        
+        // If it was the last attempt and still failed
+        if (attempt === maxRetries) {
+          await addAction("Max repair attempts reached. Build still failing.");
+        }
+      }
+    }
+
+    // 3. Attempt Test Repair (Fix failing tests) - Only if build passed or we want to try anyway
+    await attemptTestRepair(folderPath, addAction);
+
+    // 4. Universal Browser Environment Fix (Jest, Karma, etc.)
+    await fixBrowserEnvironment(folderPath, addAction);
+    // ---------------------------
+
+    // --- BROWSER ENVIRONMENT FIX ---
+    // If tests failed due to browser issues, try to configure headless mode
+    try {
+      const isAngular = fs.existsSync(path.join(folderPath, "angular.json"));
+      if (isAngular) {
+        await addAction("Checking Angular test configuration for headless mode...");
+        const karmaConfPath = path.join(folderPath, "karma.conf.js");
+        if (fs.existsSync(karmaConfPath)) {
+          let karmaContent = fs.readFileSync(karmaConfPath, "utf-8");
+          if (!karmaContent.includes("ChromeHeadless")) {
+             // Simple string replacement to add ChromeHeadless
+             if (karmaContent.includes("'Chrome'")) {
+               karmaContent = karmaContent.replace("'Chrome'", "'ChromeHeadless'");
+               fs.writeFileSync(karmaConfPath, karmaContent);
+               await addAction("Updated karma.conf.js to use ChromeHeadless");
+             } else if (karmaContent.includes('"Chrome"')) {
+               karmaContent = karmaContent.replace('"Chrome"', '"ChromeHeadless"');
+               fs.writeFileSync(karmaConfPath, karmaContent);
+               await addAction("Updated karma.conf.js to use ChromeHeadless");
+             }
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fix browser config:", e);
+    }
+    // -------------------------------
 
     // --- ENV VARS AUTO-FIX & SYNC ---
     try {
-      console.log(`[AutoFix] Detecting and fixing environment variables for ${project.id}...`);
+      await logAutoFix(project.id, "Detecting environment variables...");
       const updatedEnvVars = await autoFixEnvVars(project);
       const envCount = Object.keys(updatedEnvVars).length;
       
       if (envCount > 0) {
-        actions.push(`Detected and configured ${envCount} environment variables`);
+        await addAction(`Detected and configured ${envCount} environment variables`);
         
         // Update project object in memory with new env vars for sync
         const updatedProject = { ...project, envVars: updatedEnvVars };
 
         // Sync to Vercel
         if (process.env.VERCEL_TOKEN) {
+          await logAutoFix(project.id, "Syncing to Vercel...");
           const vResult = await syncEnvVarsToVercel(updatedProject);
           if (vResult.success) {
-            actions.push("Synced environment variables to Vercel");
+            await addAction("Synced environment variables to Vercel");
           } else {
-            actions.push(`Failed to sync to Vercel: ${vResult.error}`);
+            await addAction(`Failed to sync to Vercel: ${vResult.error}`);
           }
         }
 
         // Sync to Render
         if (process.env.RENDER_API_TOKEN && project.renderServiceId) {
+          await logAutoFix(project.id, "Syncing to Render...");
           const rResult = await syncEnvVarsToRender(updatedProject);
           if (rResult.success) {
-            actions.push("Synced environment variables to Render");
+            await addAction("Synced environment variables to Render");
           } else {
-            actions.push(`Failed to sync to Render: ${rResult.error}`);
+            await addAction(`Failed to sync to Render: ${rResult.error}`);
           }
         }
 
         // Sync to Railway
         if (process.env.RAILWAY_TOKEN && project.railwayServiceId) {
+          await logAutoFix(project.id, "Syncing to Railway...");
           const rwResult = await syncEnvVarsToRailway(updatedProject);
           if (rwResult.success) {
-            actions.push("Synced environment variables to Railway");
+            await addAction("Synced environment variables to Railway");
           } else {
-            actions.push(`Failed to sync to Railway: ${rwResult.error}`);
+            await addAction(`Failed to sync to Railway: ${rwResult.error}`);
           }
         }
       }
     } catch (e) {
       console.error("[AutoFix] Env Var Auto-fix failed:", e);
-      actions.push("Failed to auto-configure environment variables");
+      await addAction("Failed to auto-configure environment variables");
     }
     // --------------------------------
 
@@ -143,6 +259,7 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     const readyForDeploy = checkReadyForDeploy(projectType, folderPath);
 
     const report = buildAutoFixReport(projectType, actions, readyForDeploy);
+    await logAutoFix(project.id, `Auto-fix completed. Ready for deploy: ${readyForDeploy}`);
 
     return {
       autoFixStatus: "success",
@@ -151,7 +268,7 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[AutoFix] Error fixing project ${project.id}:`, error);
+    await logAutoFix(project.id, `Auto-fix failed: ${errorMsg}`);
 
     return {
       autoFixStatus: "failed",
@@ -162,9 +279,222 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 }
 
 /**
+ * Apply targeted fixes based on known error signatures
+ * Returns true if a fix was applied
+ */
+async function applyTargetedFix(
+  folderPath: string,
+  errorOutput: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<boolean> {
+  let fixed = false;
+
+  // 1. ERR_PACKAGE_PATH_NOT_EXPORTED (React Scripts v4 vs Node 17+)
+  if (errorOutput.includes("ERR_PACKAGE_PATH_NOT_EXPORTED")) {
+    await addAction("Detected ERR_PACKAGE_PATH_NOT_EXPORTED (Node.js compatibility issue)");
+    
+    // Force upgrade react-scripts
+    await execAsync("npm install react-scripts@5.0.1 --save --legacy-peer-deps", { cwd: folderPath });
+    await addAction("Forced upgrade to react-scripts@5.0.1");
+
+    // Delete node_modules and lockfile to force clean slate
+    const lockFile = path.join(folderPath, "package-lock.json");
+    const nodeModules = path.join(folderPath, "node_modules");
+    
+    if (fs.existsSync(lockFile)) fs.unlinkSync(lockFile);
+    if (fs.existsSync(nodeModules)) fs.rmSync(nodeModules, { recursive: true, force: true });
+    
+    await addAction("Cleaned node_modules and package-lock.json");
+    
+    // Re-install
+    await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 180000 });
+    await addAction("Re-installed dependencies");
+    
+    fixed = true;
+  }
+
+  // 2. OpenSSL Legacy Provider (Node 17+ crypto issue)
+  else if (errorOutput.includes("digital envelope routines::unsupported")) {
+    await addAction("Detected OpenSSL legacy provider issue");
+    const packageJsonPath = path.join(folderPath, "package.json");
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    
+    // Add flag to start/build scripts
+    if (pkg.scripts) {
+      for (const key of ["start", "build", "test"]) {
+        if (pkg.scripts[key] && !pkg.scripts[key].includes("NODE_OPTIONS")) {
+          // Windows/Linux compatible way: set NODE_OPTIONS
+          // Actually, cross-env is safer, but let's try direct injection for now
+          // Or just prepend it? "SET NODE_OPTIONS=... && cmd" is windows specific.
+          // "react-scripts --openssl-legacy-provider" is not a thing.
+          // Best way: update package.json to use "react-scripts start" -> "react-scripts start" (no change)
+          // But we need to set the env var.
+          // Let's try to upgrade react-scripts first as that usually fixes it too.
+          // If that fails, we might need to inject it.
+        }
+      }
+    }
+    
+    // Actually, upgrading react-scripts is the better fix for this too.
+    await execAsync("npm install react-scripts@5.0.1 --save --legacy-peer-deps", { cwd: folderPath });
+    await addAction("Upgraded react-scripts to fix OpenSSL issue");
+    fixed = true;
+  }
+
+  // 3. Missing Dependencies
+  else if (errorOutput.includes("Module not found") || errorOutput.includes("Cannot find module")) {
+    await fixMissingDependencies(folderPath, addAction); // Reuse existing logic
+    fixed = true;
+  }
+
+  // 4. PostCSS Config Error (often happens with react-scripts v5)
+  else if (errorOutput.includes("postcss-safe-parser") || errorOutput.includes("Loading PostCSS Plugin failed")) {
+     await addAction("Detected PostCSS configuration conflict");
+     // Rename postcss config to disable it, let react-scripts handle it
+     const postcssConfig = path.join(folderPath, "postcss.config.js");
+     if (fs.existsSync(postcssConfig)) {
+       fs.renameSync(postcssConfig, path.join(folderPath, "postcss.config.js.bak"));
+       await addAction("Disabled custom postcss.config.js (incompatible with new react-scripts)");
+       fixed = true;
+     }
+  }
+
+  return fixed;
+}
+
+/**
+ * Fix NestJS projects
+ */
+async function fixNestProject(
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  const packageJsonPath = path.join(folderPath, "package.json");
+  
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+      let updated = false;
+
+      // Ensure build script exists
+      if (!pkg.scripts) pkg.scripts = {};
+      if (!pkg.scripts.build) {
+        pkg.scripts.build = "nest build";
+        updated = true;
+      }
+      if (!pkg.scripts.start) {
+        pkg.scripts.start = "nest start";
+        updated = true;
+      }
+      if (!pkg.scripts["start:prod"]) {
+        pkg.scripts["start:prod"] = "node dist/main";
+        updated = true;
+      }
+
+      if (updated) {
+        fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
+        await addAction("Added NestJS build/start scripts");
+      }
+    } catch (e) {
+      // Ignore
+    }
+  }
+}
+
+/**
+ * Universal Missing Dependency Fixer
+ * Runs build, parses errors, installs missing modules
+ */
+async function fixMissingDependencies(
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  try {
+    // Run a dry-run build to catch errors
+    // We use a short timeout because we expect it to fail fast if deps are missing
+    await execAsync("npm run build", { cwd: folderPath, timeout: 30000 });
+  } catch (e: any) {
+    const output = (e.stdout || "") + "\n" + (e.stderr || "");
+    
+    // Regex to find missing modules
+    // Matches: "Module not found: Error: Can't resolve 'axios'"
+    // Matches: "Cannot find module 'express'"
+    const missingModules = new Set<string>();
+    
+    const regex1 = /Module not found: Error: Can't resolve '([^']+)'/g;
+    const regex2 = /Cannot find module '([^']+)'/g;
+    const regex3 = /Error: '([^']+)' is not recognized/g; // Sometimes happens with missing CLI tools
+
+    let match;
+    while ((match = regex1.exec(output)) !== null) missingModules.add(match[1]);
+    while ((match = regex2.exec(output)) !== null) missingModules.add(match[1]);
+    
+    // Filter out relative paths (local files)
+    const modulesToInstall = Array.from(missingModules).filter(m => !m.startsWith(".") && !m.startsWith("/"));
+
+    if (modulesToInstall.length > 0) {
+      await addAction(`Detected missing dependencies: ${modulesToInstall.join(", ")}`);
+      try {
+        await execAsync(`npm install ${modulesToInstall.join(" ")} --legacy-peer-deps`, { cwd: folderPath, timeout: 60000 });
+        await addAction(`Installed missing dependencies: ${modulesToInstall.join(", ")}`);
+      } catch (installErr) {
+        console.error("Failed to install missing deps:", installErr);
+      }
+    }
+  }
+}
+
+/**
+ * Universal Browser Environment Fixer
+ * Configures Headless mode for Karma, Jest, etc.
+ */
+async function fixBrowserEnvironment(
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  // 1. Karma (Angular)
+  const karmaConfPath = path.join(folderPath, "karma.conf.js");
+  if (fs.existsSync(karmaConfPath)) {
+    let content = fs.readFileSync(karmaConfPath, "utf-8");
+    if (!content.includes("ChromeHeadless")) {
+      if (content.includes("'Chrome'")) {
+        content = content.replace(/'Chrome'/g, "'ChromeHeadless'");
+        fs.writeFileSync(karmaConfPath, content);
+        await addAction("Updated karma.conf.js to use ChromeHeadless");
+      } else if (content.includes('"Chrome"')) {
+        content = content.replace(/"Chrome"/g, '"ChromeHeadless"');
+        fs.writeFileSync(karmaConfPath, content);
+        await addAction("Updated karma.conf.js to use ChromeHeadless");
+      }
+    }
+  }
+
+  // 2. Jest (React/Node) - Check package.json for test script
+  const packageJsonPath = path.join(folderPath, "package.json");
+  if (fs.existsSync(packageJsonPath)) {
+    try {
+      const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+      if (pkg.scripts && pkg.scripts.test) {
+        // If using react-scripts test, ensure CI=true to avoid interactive mode
+        if (pkg.scripts.test.includes("react-scripts test") && !pkg.scripts.test.includes("CI=true")) {
+           // We don't change the script itself to avoid breaking local dev, 
+           // but we could add a test:ci script? 
+           // For now, let's just ensure we don't have watch mode forced
+           if (pkg.scripts.test.includes("--watch")) {
+             pkg.scripts.test = pkg.scripts.test.replace("--watch", "--watchAll=false");
+             fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
+             await addAction("Disabled watch mode in test script for CI compatibility");
+           }
+        }
+      }
+    } catch (e) {}
+  }
+}
+
+/**
  * Fix static web projects
  */
-async function fixStaticWeb(folderPath: string, actions: string[]): Promise<void> {
+async function fixStaticWeb(folderPath: string, addAction: (msg: string) => Promise<void>): Promise<void> {
   const indexPath = path.join(folderPath, "index.html");
 
   // Check if index.html exists
@@ -178,11 +508,11 @@ async function fixStaticWeb(folderPath: string, actions: string[]): Promise<void
     if (candidateFiles.length > 0) {
       // Copy first candidate to index.html
       fs.copyFileSync(candidateFiles[0], indexPath);
-      actions.push(`Created index.html from ${path.basename(candidateFiles[0])}`);
+      await addAction(`Created index.html from ${path.basename(candidateFiles[0])}`);
     } else if (htmlFiles.length > 0) {
       // Use first HTML file
       fs.copyFileSync(htmlFiles[0], indexPath);
-      actions.push(`Created index.html from ${path.basename(htmlFiles[0])}`);
+      await addAction(`Created index.html from ${path.basename(htmlFiles[0])}`);
     } else {
       // Create placeholder
       const placeholder = `<!DOCTYPE html>
@@ -199,10 +529,10 @@ async function fixStaticWeb(folderPath: string, actions: string[]): Promise<void
 </body>
 </html>`;
       fs.writeFileSync(indexPath, placeholder);
-      actions.push("Created placeholder index.html");
+      await addAction("Created placeholder index.html");
     }
   } else {
-    actions.push("index.html already exists");
+    await addAction("index.html already exists");
   }
 }
 
@@ -212,7 +542,7 @@ async function fixStaticWeb(folderPath: string, actions: string[]): Promise<void
 async function fixNodeBackend(
   folderPath: string,
   projectName: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const packageJsonPath = path.join(folderPath, "package.json");
 
@@ -231,7 +561,7 @@ async function fixNodeBackend(
       },
     };
     fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-    actions.push("Created minimal package.json");
+    await addAction("Created minimal package.json");
   } else {
     // Check and update package.json
     try {
@@ -245,12 +575,12 @@ async function fixNodeBackend(
       if (!pkg.scripts.start) {
         pkg.scripts.start = "node server.js";
         fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-        actions.push("Added start script to package.json");
+        await addAction("Added start script to package.json");
       } else {
-        actions.push("package.json already has start script");
+        await addAction("package.json already has start script");
       }
     } catch (e) {
-      actions.push("Could not parse package.json, skipping updates");
+      await addAction("Could not parse package.json, skipping updates");
     }
   }
 
@@ -275,9 +605,9 @@ app.listen(port, () => {
 });`;
 
     fs.writeFileSync(path.join(folderPath, "server.js"), serverCode);
-    actions.push("Created placeholder server.js");
+    await addAction("Created placeholder server.js");
   } else {
-    actions.push("Entry point file detected");
+    await addAction("Entry point file detected");
   }
 }
 
@@ -287,12 +617,12 @@ app.listen(port, () => {
 async function fixReactProject(
   folderPath: string,
   projectType: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const packageJsonPath = path.join(folderPath, "package.json");
 
   if (!fs.existsSync(packageJsonPath)) {
-    actions.push("No package.json found, skipping script fixes");
+    await addAction("No package.json found, skipping script fixes");
     return;
   }
 
@@ -322,9 +652,36 @@ async function fixReactProject(
 
       if (updated) {
         fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-        actions.push("Added Next.js build scripts");
+        await addAction("Added Next.js build scripts");
       }
     } else if (projectType === "react_spa") {
+      // Fix for ERR_PACKAGE_PATH_NOT_EXPORTED on Node 18+ (Vercel)
+      // Upgrade react-scripts if it's old (v4 or lower)
+      if (pkg.dependencies && pkg.dependencies["react-scripts"]) {
+        const currentVersion = pkg.dependencies["react-scripts"];
+        // Check if version starts with 1, 2, 3, or 4
+        if (typeof currentVersion === 'string' && /^[1-4]\./.test(currentVersion.replace(/[\^~]/, ''))) {
+           pkg.dependencies["react-scripts"] = "5.0.1";
+           updated = true;
+           await addAction("Upgraded react-scripts to v5.0.1 to fix Node.js 18+ compatibility (ERR_PACKAGE_PATH_NOT_EXPORTED)");
+           
+           // CRITICAL: Delete package-lock.json to force fresh dependency resolution
+           // Otherwise the old postcss version remains locked inside node_modules
+           const lockFile = path.join(folderPath, "package-lock.json");
+           if (fs.existsSync(lockFile)) {
+             fs.unlinkSync(lockFile);
+             await addAction("Deleted package-lock.json to ensure clean dependency upgrade");
+           }
+           
+           // Also check for postcss.config.js which often conflicts with react-scripts v5
+           const postcssConfig = path.join(folderPath, "postcss.config.js");
+           if (fs.existsSync(postcssConfig)) {
+             fs.renameSync(postcssConfig, path.join(folderPath, "postcss.config.js.bak"));
+             await addAction("Backed up custom postcss.config.js to avoid conflicts with react-scripts v5");
+           }
+        }
+      }
+
       if (!pkg.scripts.start) {
         // Try to detect if using Vite
         if (Object.keys(pkg.dependencies || {}).includes("vite")) {
@@ -339,15 +696,15 @@ async function fixReactProject(
 
       if (updated) {
         fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-        actions.push("Added React build scripts");
+        await addAction("Updated React scripts/dependencies");
       }
     }
 
     if (!updated) {
-      actions.push("Build scripts already configured");
+      await addAction("Build scripts already configured");
     }
   } catch (e) {
-    actions.push("Could not update package.json scripts");
+    await addAction("Could not update package.json scripts");
   }
 }
 
@@ -357,12 +714,12 @@ async function fixReactProject(
 async function generateDockerfile(
   folderPath: string,
   projectType: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const dockerfilePath = path.join(folderPath, "Dockerfile");
 
   if (fs.existsSync(dockerfilePath)) {
-    actions.push("Dockerfile already exists");
+    await addAction("Dockerfile already exists");
     return;
   }
 
@@ -421,7 +778,7 @@ CMD ["npm", "start"]`;
   }
 
   fs.writeFileSync(dockerfilePath, content);
-  actions.push("Generated Dockerfile for " + projectType);
+  await addAction("Generated Dockerfile for " + projectType);
 }
 
 /**
@@ -429,12 +786,12 @@ CMD ["npm", "start"]`;
  */
 async function generateEnvExample(
   folderPath: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const envExamplePath = path.join(folderPath, ".env.example");
   
   if (fs.existsSync(envExamplePath)) {
-    actions.push(".env.example already exists");
+    await addAction(".env.example already exists");
     return;
   }
 
@@ -459,7 +816,7 @@ async function generateEnvExample(
   if (envVars.size > 0) {
     const content = Array.from(envVars).map(v => `${v}=`).join("\n");
     fs.writeFileSync(envExamplePath, content);
-    actions.push(`Generated .env.example with ${envVars.size} variables`);
+    await addAction(`Generated .env.example with ${envVars.size} variables`);
   }
 }
 
@@ -469,7 +826,7 @@ async function generateEnvExample(
 async function generateTsConfig(
   folderPath: string,
   projectType: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const tsConfigPath = path.join(folderPath, "tsconfig.json");
   
@@ -481,7 +838,7 @@ async function generateTsConfig(
   }
 
   if (fs.existsSync(tsConfigPath)) {
-    actions.push("tsconfig.json already exists");
+    await addAction("tsconfig.json already exists");
     return;
   }
 
@@ -513,7 +870,7 @@ async function generateTsConfig(
   }
 
   fs.writeFileSync(tsConfigPath, JSON.stringify(tsConfig, null, 2));
-  actions.push("Generated tsconfig.json");
+  await addAction("Generated tsconfig.json");
 }
 
 /**
@@ -522,7 +879,7 @@ async function generateTsConfig(
 async function generateBasicTests(
   folderPath: string,
   projectType: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   const packageJsonPath = path.join(folderPath, "package.json");
   if (!fs.existsSync(packageJsonPath)) return;
@@ -580,7 +937,7 @@ test('renders without crashing', () => {
       pkg.scripts.test = "node tests/*.test.js || true"; // || true to prevent build fail on simple runner
       
       fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
-      actions.push("Generated basic smoke tests and updated test script");
+      await addAction("Generated basic smoke tests and updated test script");
     }
 
   } catch (e) {
@@ -593,11 +950,12 @@ test('renders without crashing', () => {
  */
 async function attemptCodeRepair(
   folderPath: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   // 1. Check for build/lint errors
   let errorOutput = "";
   try {
+    await logAutoFix(path.basename(folderPath), "Checking for build errors...");
     // Try build first
     await execAsync("npm run build", { cwd: folderPath, timeout: 60000 });
     // If build passes, try lint
@@ -613,7 +971,7 @@ async function attemptCodeRepair(
   // Simple heuristic: look for file paths in the error
   const fileMatch = errorOutput.match(/([a-zA-Z0-9_\-\/]+\.(ts|js|tsx|jsx|json)):/);
   if (!fileMatch) {
-    actions.push("Detected build errors but could not identify file to fix.");
+    await addAction("Detected build errors but could not identify file to fix.");
     return;
   }
 
@@ -629,6 +987,7 @@ async function attemptCodeRepair(
 
   // 4. Ask OpenAI to fix it
   try {
+    await logAutoFix(path.basename(folderPath), `Attempting AI repair for ${relativeFilePath}...`);
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -654,11 +1013,11 @@ ${fileContent}`
       const cleanContent = fixedContent.replace(/^```[a-z]*\n/, "").replace(/\n```$/, "");
       
       fs.writeFileSync(absoluteFilePath, cleanContent);
-      actions.push(`Repaired syntax error in ${relativeFilePath}`);
+      await addAction(`Repaired syntax error in ${relativeFilePath}`);
     }
   } catch (error) {
     console.error("AI Code Repair failed:", error);
-    actions.push("Attempted AI code repair but failed.");
+    await addAction("Attempted AI code repair but failed.");
   }
 }
 
@@ -667,22 +1026,17 @@ ${fileContent}`
  */
 async function attemptTestRepair(
   folderPath: string,
-  actions: string[]
+  addAction: (msg: string) => Promise<void>
 ): Promise<void> {
   // 1. Run tests
   let errorOutput = "";
   try {
+    await logAutoFix(path.basename(folderPath), "Running tests to check for failures...");
     // Check if it's an Angular project and adjust test command
     const isAngular = fs.existsSync(path.join(folderPath, "angular.json"));
     let testCommand = "npm test";
     
     if (isAngular) {
-      // For Angular, we need to ensure we run in CI mode (no watch, headless)
-      // We can try to pass arguments, but npm scripts might not forward them.
-      // Best bet is to try running ng directly if possible, or assume npm test is configured.
-      // But often npm test is just "ng test".
-      // Let's try to modify package.json temporarily or just run a timeout-bound test.
-      // Actually, let's try to run 'ng test' directly if we can find the binary, or use npx.
       testCommand = "npx ng test --watch=false --browsers=ChromeHeadless";
     }
 
@@ -699,14 +1053,11 @@ async function attemptTestRepair(
   const fileMatch = errorOutput.match(/([a-zA-Z0-9_\-\/]+\.(spec\.ts|test\.ts|test\.js|spec\.js))/);
   
   if (!fileMatch) {
-    actions.push("Detected test failures but could not identify test file to fix.");
+    await addAction("Detected test failures but could not identify test file to fix.");
     return;
   }
 
   const relativeFilePath = fileMatch[1];
-  // Sometimes the path in stack trace is absolute or relative to source root.
-  // We need to find the actual file.
-  // If it starts with src/, it's likely relative to project root.
   let absoluteFilePath = path.join(folderPath, relativeFilePath);
   
   // If not found, try to search for it
@@ -724,6 +1075,7 @@ async function attemptTestRepair(
 
   // 4. Ask OpenAI to fix it
   try {
+    await logAutoFix(path.basename(folderPath), `Attempting AI test repair for ${relativeFilePath}...`);
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
@@ -749,11 +1101,11 @@ ${fileContent}`
       const cleanContent = fixedContent.replace(/^```[a-z]*\n/, "").replace(/\n```$/, "");
       
       fs.writeFileSync(absoluteFilePath, cleanContent);
-      actions.push(`Repaired failing test in ${path.basename(absoluteFilePath)}`);
+      await addAction(`Repaired failing test in ${path.basename(absoluteFilePath)}`);
     }
   } catch (error) {
     console.error("AI Test Repair failed:", error);
-    actions.push("Attempted AI test repair but failed.");
+    await addAction("Attempted AI test repair but failed.");
   }
 }
 

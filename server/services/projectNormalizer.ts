@@ -19,14 +19,43 @@ export async function normalizeProjectStructure(
 ): Promise<NormalizationResult> {
   const actions: string[] = [];
   const isVercel = process.env.VERCEL === "1";
-  const normalizedRoot = isVercel
+  let normalizedRoot = isVercel
     ? path.join(os.tmpdir(), "normalized", project.id)
     : path.join(process.cwd(), "normalized", project.id);
 
   try {
     // Clean and ensure normalized directory
     if (fs.existsSync(normalizedRoot)) {
-      fs.rmSync(normalizedRoot, { recursive: true, force: true });
+      // Retry logic for Windows EBUSY errors
+      let deleted = false;
+      for (let i = 0; i < 5; i++) {
+        try {
+          fs.rmSync(normalizedRoot, { recursive: true, force: true });
+          deleted = true;
+          break;
+        } catch (e: any) {
+          if (e.code === 'EBUSY' || e.code === 'EPERM') {
+            console.log(`[Normalizer] Folder locked, retrying delete (${i+1}/5)...`);
+            await new Promise(resolve => setTimeout(resolve, 1000));
+          } else {
+            // If it's not a lock error, maybe we can't delete it for other reasons
+            // But we'll try the fallback anyway
+            break; 
+          }
+        }
+      }
+      
+      if (!deleted) {
+        // If we still can't delete, use a unique path for this run
+        // This avoids the lock entirely
+        console.warn(`[Normalizer] Could not clean ${normalizedRoot}, switching to unique path.`);
+        const timestamp = Date.now();
+        normalizedRoot = isVercel
+          ? path.join(os.tmpdir(), "normalized", `${project.id}_${timestamp}`)
+          : path.join(process.cwd(), "normalized", `${project.id}_${timestamp}`);
+          
+        actions.push(`Original folder was locked. Created new normalized instance at: ${path.basename(normalizedRoot)}`);
+      }
     }
     fs.mkdirSync(normalizedRoot, { recursive: true });
 

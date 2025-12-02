@@ -109,12 +109,16 @@ function analyzePackageJsonProject(pkgPath: string, relativeFiles: string[]): { 
   const hasNext = "next" in deps;
   const hasExpress = "express" in deps;
   const hasVite = "vite" in deps;
+  const hasFastify = "fastify" in deps;
+  const hasNest = "@nestjs/core" in deps;
 
   const hasNextConfig = relativeFiles.some(p => p === "next.config.js" || p === "next.config.ts" || p === "next.config.mjs");
   const hasPagesOrApp = relativeFiles.some(p => p.startsWith("pages/") || p.startsWith("app/") || p.startsWith("src/pages/") || p.startsWith("src/app/"));
   const hasSrcIndex = relativeFiles.some(p => p === "src/index.js" || p === "src/index.tsx" || p === "src/main.tsx" || p === "src/main.jsx");
+  
+  // Expanded server file detection to include index.js/ts in root
   const hasServerFile = relativeFiles.some(p => 
-    /^(server\.(js|ts|mjs)|app\.(js|ts|mjs)|main\.(js|ts|mjs)|src\/(server|app|main|index)\.(js|ts|mjs))$/.test(p)
+    /^(server\.(js|ts|mjs)|app\.(js|ts|mjs)|main\.(js|ts|mjs)|index\.(js|ts|mjs)|src\/(server|app|main|index)\.(js|ts|mjs))$/.test(p)
   );
 
   // Next.js
@@ -127,23 +131,42 @@ function analyzePackageJsonProject(pkgPath: string, relativeFiles: string[]): { 
   }
 
   // React SPA (Vite or CRA)
-  if (hasReact && (hasVite || hasSrcIndex)) {
+  if (hasReact) {
     const errors = [];
+    // Less strict check for src directory, as some projects might be structured differently
     if (!hasSrcIndex && !relativeFiles.some(p => p.includes("src/"))) {
-      errors.push("React SPA missing src directory");
+       // It's a warning, not a hard fail if we have react
+       // But if it's Vite, we expect index.html
     }
-    return { type: "react_spa", score: 8, errors };
+    
+    if (hasVite || hasSrcIndex) {
+        return { type: "react_spa", score: 8, errors };
+    }
+    
+    // If just React but no Vite/CRA structure clearly found, still likely React
+    return { type: "react_spa", score: 7, errors };
   }
 
   // Node Backend
-  if (hasExpress || hasServerFile) {
+  if (hasExpress || hasFastify || hasNest || hasServerFile) {
     const errors = [];
+    if (!hasServerFile && !hasExpress && !hasFastify && !hasNest) {
+      // If no framework and no server file, it's weak
+      return { type: "unknown", score: 2, errors: ["package.json found but no server file or framework detected"] };
+    }
+    
     if (!hasServerFile) {
       // It might be a library or something else, but if it has express, it's likely a backend
       // But if we can't find the entry point, it's a warning
-      errors.push("Node backend missing typical entry file (server.js, app.js, main.js)");
+      errors.push("Node backend missing typical entry file (server.js, app.js, main.js, index.js)");
     }
     return { type: "node_backend", score: 6, errors };
+  }
+
+  // Generic Node - check scripts
+  if (pkg.scripts && (pkg.scripts.start || pkg.scripts.dev || pkg.scripts.build)) {
+      // If it has scripts, it's likely a valid node project of some sort
+      return { type: "node_backend", score: 4, errors: ["Generic Node.js project detected (based on scripts)"] };
   }
 
   // Generic Node
