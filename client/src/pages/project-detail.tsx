@@ -251,7 +251,12 @@ export default function ProjectDetail() {
       
       // Dialog stays open to show results
 
-      if (data.autoFixStatus === "failed") {
+      if (data.autoFixStatus === "running") {
+        toast({
+          title: "Auto-fix started",
+          description: "The process is running in the background. Please wait...",
+        });
+      } else if (data.autoFixStatus === "failed") {
         toast({
           title: "Auto-fix failed",
           description: "The auto-fix process encountered errors. Check the report for details.",
