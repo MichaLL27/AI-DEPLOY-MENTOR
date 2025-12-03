@@ -142,9 +142,15 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       const hasNodeModules = fs.existsSync(path.join(folderPath, "node_modules"));
       if (!hasNodeModules && fs.existsSync(path.join(folderPath, "package.json"))) {
         await logAutoFix(project.id, "Installing dependencies (this may take a few minutes)...");
+        
+        if (process.env.RENDER) {
+           await logAutoFix(project.id, "⚠️ Notice: Running on Render Free Tier. Due to limited CPU/RAM, installation will take significantly longer than on a local machine.");
+        }
+
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
+        // Added --no-audit --no-fund for speed optimization
         // Increased timeout to 5 minutes for slower environments (Render Free Tier)
-        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 300000 });
+        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund", { cwd: folderPath, timeout: 300000 });
         await addAction("Installed project dependencies");
       }
     } catch (e) {
