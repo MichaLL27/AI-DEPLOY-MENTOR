@@ -44,7 +44,7 @@ async function checkProjectHealth(project: Project) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
 
-    const response = await fetch(project.deployedUrl, {
+    const response = await fetch(project.deployedUrl + (project.deployedUrl.endsWith('/') ? 'health' : '/health'), {
       method: "GET",
       signal: controller.signal,
     });
@@ -57,7 +57,44 @@ async function checkProjectHealth(project: Project) {
         console.log(`[Monitoring] Project ${project.name} recovered.`);
         failureCounts[project.id] = 0;
       }
+
+      // Try to parse metrics if available
+      try {
+        const data = await response.json();
+        if (data.metrics) {
+          // Update project with latest metrics
+          // We'll store it in structureJson for now as a quick hack, or better, add a new field.
+          // Since we can't easily migrate schema right now, let's use structureJson or just log it.
+          // Actually, let's just log it to a new field 'monitoringStats' if we could, but we can't.
+          // Let's use 'autoFixLogs' temporarily or just console log.
+          // Wait, the user wants to SEE it live.
+          // I'll update the 'structureJson' field with a 'metrics' key.
+          
+          const currentStructure = project.structureJson as any || {};
+          currentStructure.metrics = data.metrics;
+          currentStructure.lastCheck = new Date().toISOString();
+          
+          await storage.updateProject(project.id, {
+            structureJson: currentStructure
+          });
+        }
+      } catch (e) {
+        // Ignore JSON parse error
+      }
+
     } else {
+      // Fallback to root check if /health fails (maybe it's a static site)
+      if (response.status === 404) {
+         const rootResponse = await fetch(project.deployedUrl, { method: "GET", signal: controller.signal });
+         if (rootResponse.ok) {
+            if (failureCounts[project.id] > 0) {
+              console.log(`[Monitoring] Project ${project.name} recovered (Root check).`);
+              failureCounts[project.id] = 0;
+            }
+            return;
+         }
+      }
+
       // Unhealthy status code
       handleFailure(project, `Status ${response.status}`);
     }

@@ -5,6 +5,7 @@ import AdmZip from "adm-zip";
 import type { Project } from "@shared/schema";
 import { classifyProject } from "./projectClassifier";
 import { normalizeProjectStructure } from "./projectNormalizer";
+import { analyzeProjectStructure } from "./structureService";
 
 /**
  * Analyze an uploaded ZIP project to detect type and structure
@@ -18,6 +19,7 @@ export async function analyzeZipProject(project: Project): Promise<{
   normalizedFolderPath: string | null;
   normalizedReport: string;
   readyForDeploy: boolean;
+  structureJson: any;
 }> {
   console.log(`[ZipAnalyzer] Analyzing project ${project.id}. Type: ${project.sourceType}, Path: ${project.zipStoredPath}`);
 
@@ -42,6 +44,21 @@ export async function analyzeZipProject(project: Project): Promise<{
     // Extract ZIP
     const zip = new AdmZip(project.zipStoredPath);
     zip.extractAllTo(extractDir, true);
+
+    // Handle single root folder case (common in GitHub/Replit ZIPs)
+    const extractedItems = fs.readdirSync(extractDir);
+    if (extractedItems.length === 1) {
+      const singleItemPath = path.join(extractDir, extractedItems[0]);
+      if (fs.statSync(singleItemPath).isDirectory()) {
+        console.log(`[ZipAnalyzer] Found single root folder: ${extractedItems[0]}. Hoisting contents...`);
+        // Move contents up
+        const contents = fs.readdirSync(singleItemPath);
+        for (const item of contents) {
+          fs.renameSync(path.join(singleItemPath, item), path.join(extractDir, item));
+        }
+        fs.rmdirSync(singleItemPath);
+      }
+    }
 
     // Scan for project markers
     const files = listFilesRecursive(extractDir);
@@ -126,6 +143,9 @@ Files Found:
     // Run full classification on extracted folder
     const classification = await classifyProject(extractDir);
 
+    // Run deep structure analysis (API routes, DB config)
+    const structureAnalysis = await analyzeProjectStructure(extractDir, classification.projectType);
+
     // Create a mock project for normalizer
     const mockProject: Partial<Project> = {
       id: project.id,
@@ -151,6 +171,7 @@ Files Found:
       normalizedReport: normalization.normalizedReport,
       readyForDeploy: normalization.readyForDeploy,
       analysisReport: report,
+      structureJson: structureAnalysis,
     };
   } catch (error) {
     // Cleanup on error

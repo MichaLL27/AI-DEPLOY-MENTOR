@@ -42,6 +42,9 @@ import {
   AlertCircle,
   CheckCircle,
   Trash2,
+  Network,
+  Database,
+  Bot,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
 import { useState } from "react";
@@ -66,6 +69,7 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { AiMentorChat } from "@/components/ai-mentor-chat";
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>();
@@ -74,10 +78,15 @@ export default function ProjectDetail() {
   const [copied, setCopied] = useState(false);
   const [expandValidation, setExpandValidation] = useState(false);
   const [expandNormalization, setExpandNormalization] = useState(false);
+  const [expandStructure, setExpandStructure] = useState(false);
   const [expandAutoFix, setExpandAutoFix] = useState(false);
   const [expandDeployLogs, setExpandDeployLogs] = useState(false);
   const [expandFiles, setExpandFiles] = useState(false);
   
+  // Chat states
+  const [isChatOpen, setIsChatOpen] = useState(false);
+  const [chatInitialMessage, setChatInitialMessage] = useState<string | undefined>(undefined);
+
   // Dialog states
   const [showAutoFixDialog, setShowAutoFixDialog] = useState(false);
   const [showQaDialog, setShowQaDialog] = useState(false);
@@ -124,7 +133,14 @@ export default function ProjectDetail() {
     enabled: !!project?.normalizedFolderPath,
   });
 
-  const { data: providerConfig } = useQuery<{ vercel: boolean; render: boolean; railway: boolean }>({
+  const { data: providerConfig } = useQuery<{ 
+    vercel: boolean; 
+    render: boolean; 
+    railway: boolean;
+    digitalocean: boolean;
+    aws: boolean;
+    gcp: boolean;
+  }>({
     queryKey: ["/api/config/providers"],
   });
 
@@ -146,6 +162,7 @@ export default function ProjectDetail() {
           description: "Quality checks failed. Please check the report.",
           variant: "destructive",
         });
+        openChatWithContext("The QA checks failed. Can you analyze the report and tell me how to fix the issues?");
       } else {
         // Check if fixes were applied
         const fixes = data.qaReport?.match(/\[QA Auto-Fix\] Applied (\d+) fixes/);
@@ -157,6 +174,7 @@ export default function ProjectDetail() {
             ? "Issues were detected and automatically repaired by AI." 
             : "Quality checks have passed successfully.",
         });
+        openChatWithContext("QA passed successfully! Please congratulate me and tell me if I'm ready to deploy.");
       }
     },
     onError: (error: Error) => {
@@ -166,6 +184,7 @@ export default function ProjectDetail() {
         description: error.message,
         variant: "destructive",
       });
+      openChatWithContext(`The QA process failed to run with this error: ${error.message}. What should I do?`);
     },
   });
 
@@ -181,6 +200,7 @@ export default function ProjectDetail() {
         title: "Deployment successful",
         description: `Your project is now live at ${data.deployedUrl}`,
       });
+      openChatWithContext(`Deployment was successful! The app is live at ${data.deployedUrl}. Please congratulate me!`);
     },
     onError: (error: Error) => {
       queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
@@ -189,6 +209,7 @@ export default function ProjectDetail() {
         description: error.message,
         variant: "destructive",
       });
+      openChatWithContext(`Deployment failed with this error: ${error.message}. Can you help me fix it?`);
     },
   });
 
@@ -262,11 +283,13 @@ export default function ProjectDetail() {
           description: "The auto-fix process encountered errors. Check the report for details.",
           variant: "destructive",
         });
+        openChatWithContext("The Auto-Fix process failed. Can you explain why?");
       } else {
         toast({
           title: "Auto-fix completed",
           description: data.readyForDeploy ? "Project is now ready for deployment!" : "Project was fixed. Check the report.",
         });
+        openChatWithContext("Auto-fix completed successfully. What should I do next?");
       }
     },
     onError: (error: Error) => {
@@ -276,6 +299,7 @@ export default function ProjectDetail() {
         description: error.message,
         variant: "destructive",
       });
+      openChatWithContext(`Auto-fix failed to start with error: ${error.message}. Can you help?`);
     },
   });
 
@@ -348,6 +372,11 @@ export default function ProjectDetail() {
       title: "Copied to clipboard",
       description: "The URL has been copied to your clipboard.",
     });
+  };
+
+  const openChatWithContext = (message: string) => {
+    setChatInitialMessage(message);
+    setIsChatOpen(true);
   };
 
   if (isLoading) {
@@ -619,6 +648,15 @@ export default function ProjectDetail() {
                           <SelectItem value="railway" disabled={!providerConfig?.railway}>
                             Railway {!providerConfig?.railway && "(Not Configured)"}
                           </SelectItem>
+                          <SelectItem value="digitalocean" disabled={!providerConfig?.digitalocean}>
+                            DigitalOcean {!providerConfig?.digitalocean && "(Not Configured)"}
+                          </SelectItem>
+                          <SelectItem value="aws" disabled={!providerConfig?.aws}>
+                            AWS {!providerConfig?.aws && "(Not Configured)"}
+                          </SelectItem>
+                          <SelectItem value="gcp" disabled={!providerConfig?.gcp}>
+                            Google Cloud {!providerConfig?.gcp && "(Not Configured)"}
+                          </SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -696,6 +734,14 @@ export default function ProjectDetail() {
                     return "Please review the full QA report below for details.";
                   })()}
                 </div>
+                <Button 
+                  variant="link" 
+                  className="px-0 text-red-600 dark:text-red-400 h-auto mt-2"
+                  onClick={() => openChatWithContext("The QA check failed. Can you help me understand why and how to fix it?")}
+                >
+                  <Bot className="h-3 w-3 mr-1.5" />
+                  Ask AI to fix this
+                </Button>
               </div>
             </div>
           )}
@@ -891,6 +937,114 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
+                {project.structureJson && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandStructure(!expandStructure)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-structure"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-indigo-500/10 flex items-center justify-center">
+                          <Network className="h-4 w-4 text-indigo-600 dark:text-indigo-500" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">AI Structural Analysis</span>
+                          <span className="text-xs text-muted-foreground">Detected API routes and database config</span>
+                        </div>
+                      </div>
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandStructure ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandStructure && (
+                      <div className="p-4 border-t bg-slate-50 dark:bg-slate-950 space-y-4">
+                        {(() => {
+                          try {
+                            const structure = typeof project.structureJson === 'string' 
+                              ? JSON.parse(project.structureJson) 
+                              : project.structureJson;
+                            
+                            return (
+                              <>
+                                <div>
+                                  <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-2 flex items-center gap-2">
+                                    <Database className="h-3 w-3" /> Database Configuration
+                                  </h5>
+                                  <div className="bg-background border rounded-md p-3 text-sm">
+                                    {structure.databaseConfig ? (
+                                      <div className="grid grid-cols-2 gap-2">
+                                        <div>
+                                          <span className="text-muted-foreground">Type:</span> <span className="font-medium">{structure.databaseConfig.type}</span>
+                                        </div>
+                                        <div>
+                                          <span className="text-muted-foreground">ORM:</span> <span className="font-medium">{structure.databaseConfig.orm}</span>
+                                        </div>
+                                        {structure.databaseConfig.schemaFile && (
+                                          <div className="col-span-2">
+                                            <span className="text-muted-foreground">Schema:</span> <code className="text-xs bg-muted px-1 py-0.5 rounded">{structure.databaseConfig.schemaFile}</code>
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground italic">No database configuration detected.</span>
+                                    )}
+                                  </div>
+                                </div>
+
+                                <div>
+                                  <h5 className="text-xs font-semibold uppercase text-muted-foreground mb-2 flex items-center gap-2">
+                                    <Network className="h-3 w-3" /> API Routes ({structure.apiRoutes?.length || 0})
+                                  </h5>
+                                  <div className="bg-background border rounded-md overflow-hidden">
+                                    {structure.apiRoutes && structure.apiRoutes.length > 0 ? (
+                                      <div className="max-h-60 overflow-y-auto">
+                                        <table className="w-full text-sm text-left">
+                                          <thead className="bg-muted/50 text-xs uppercase text-muted-foreground sticky top-0">
+                                            <tr>
+                                              <th className="px-3 py-2 font-medium">Method</th>
+                                              <th className="px-3 py-2 font-medium">Path</th>
+                                              <th className="px-3 py-2 font-medium">Type</th>
+                                            </tr>
+                                          </thead>
+                                          <tbody className="divide-y">
+                                            {structure.apiRoutes.map((route: any, i: number) => (
+                                              <tr key={i} className="hover:bg-muted/20">
+                                                <td className="px-3 py-2 font-mono text-xs">
+                                                  <span className={`px-1.5 py-0.5 rounded ${
+                                                    route.method === 'GET' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300' :
+                                                    route.method === 'POST' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300' :
+                                                    route.method === 'PUT' || route.method === 'PATCH' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300' :
+                                                    route.method === 'DELETE' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300' :
+                                                    'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                                                  }`}>
+                                                    {route.method}
+                                                  </span>
+                                                </td>
+                                                <td className="px-3 py-2 font-mono text-xs truncate max-w-[200px]" title={route.path}>{route.path}</td>
+                                                <td className="px-3 py-2 text-xs text-muted-foreground">{route.type}</td>
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    ) : (
+                                      <div className="p-3 text-muted-foreground italic text-center">No API routes detected.</div>
+                                    )}
+                                  </div>
+                                </div>
+                              </>
+                            );
+                          } catch (e) {
+                            return <div className="text-red-500">Error parsing structure data.</div>;
+                          }
+                        })()}
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {project.autoFixReport && (
                   <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
                     <button
@@ -1006,6 +1160,80 @@ export default function ProjectDetail() {
       {isDeployed && (
         <div className="mb-8">
           <MonitoringPanel project={project} />
+        </div>
+      )}
+
+      {/* Metrics Panel (New) */}
+      {isDeployed && (
+        <div className="mb-8">
+          <Card className="border-none shadow-md bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-950">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between gap-4 border-b bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm rounded-t-xl">
+              <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                <Activity className="h-5 w-5 text-primary" />
+                Performance Metrics
+              </CardTitle>
+              <span className="text-xs text-muted-foreground">Live from /health endpoint</span>
+            </CardHeader>
+            <CardContent className="p-6">
+              {(() => {
+                let metrics = null;
+                try {
+                  const structure = typeof project.structureJson === 'string' 
+                    ? JSON.parse(project.structureJson) 
+                    : project.structureJson;
+                  metrics = structure?.metrics;
+                } catch (e) {
+                  // ignore
+                }
+
+                return (
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="p-4 rounded-xl bg-blue-50 dark:bg-blue-900/10 border border-blue-100 dark:border-blue-900/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
+                          <Activity className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                        </div>
+                        <span className="font-medium text-sm text-blue-900 dark:text-blue-100">CPU Usage</span>
+                      </div>
+                      <div className="text-2xl font-bold text-blue-700 dark:text-blue-300">
+                        {metrics?.cpu ? `${Math.round(metrics.cpu.user / 1000)}%` : "-- %"}
+                      </div>
+                      <p className="text-xs text-blue-600/60 dark:text-blue-400/60 mt-1">System Load</p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-purple-50 dark:bg-purple-900/10 border border-purple-100 dark:border-purple-900/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
+                          <Database className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                        </div>
+                        <span className="font-medium text-sm text-purple-900 dark:text-purple-100">Memory Usage</span>
+                      </div>
+                      <div className="text-2xl font-bold text-purple-700 dark:text-purple-300">
+                        {metrics?.memory ? `${Math.round(metrics.memory.heapUsed / 1024 / 1024)} MB` : "-- MB"}
+                      </div>
+                      <p className="text-xs text-purple-600/60 dark:text-purple-400/60 mt-1">Heap Used</p>
+                    </div>
+
+                    <div className="p-4 rounded-xl bg-green-50 dark:bg-green-900/10 border border-green-100 dark:border-green-900/50">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
+                          <Clock className="h-4 w-4 text-green-600 dark:text-green-400" />
+                        </div>
+                        <span className="font-medium text-sm text-green-900 dark:text-green-100">Uptime</span>
+                      </div>
+                      <div className="text-2xl font-bold text-green-700 dark:text-green-300">
+                        {metrics?.uptime ? `${Math.round(metrics.uptime / 3600)} h` : "-- h"}
+                      </div>
+                      <p className="text-xs text-green-600/60 dark:text-green-400/60 mt-1">Since last restart</p>
+                    </div>
+                  </div>
+                );
+              })()}
+              <div className="mt-4 text-center text-xs text-muted-foreground">
+                Metrics are collected every 5 minutes via the monitoring service.
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 
@@ -1397,6 +1625,28 @@ export default function ProjectDetail() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AiMentorChat 
+        projectId={id!} 
+        isOpen={isChatOpen}
+        onOpenChange={(open) => {
+          setIsChatOpen(open);
+          if (!open) setChatInitialMessage(undefined);
+        }}
+        initialMessage={chatInitialMessage}
+        onAction={(action) => {
+          if (action === "run_autofix") {
+            setShowAutoFixDialog(true);
+          } else if (action === "run_qa") {
+            setShowQaDialog(true);
+          } else if (action === "deploy_project") {
+            toast({
+              title: "Deployment Started",
+              description: "AI Mentor has initiated the deployment process.",
+            });
+          }
+        }}
+      />
     </div>
   );
 }

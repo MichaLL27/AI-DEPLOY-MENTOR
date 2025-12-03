@@ -9,6 +9,9 @@ import { autoFixEnvVars } from "./envService";
 import { syncEnvVarsToRender } from "./deployService";
 import { syncEnvVarsToVercel } from "./vercelService";
 import { syncEnvVarsToRailway } from "./railwayService";
+import { classifyProject } from "./projectClassifier";
+import { generateFunctionalTests } from "./testGeneratorService";
+import { generateCloudConfigs } from "./deploymentConfigService";
 
 const execAsync = util.promisify(exec);
 
@@ -115,6 +118,7 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
           await fixNestProject(folderPath, addAction);
         } else {
           await fixNodeBackend(folderPath, project.name, addAction);
+          await ensureHealthCheck(folderPath, addAction);
         }
         break;
       case "nextjs":
@@ -128,6 +132,19 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     // Generate Dockerfile if missing
     await generateDockerfile(folderPath, projectType, addAction);
 
+    // Generate docker-compose.yml if missing
+    await generateDockerCompose(folderPath, projectType, addAction);
+
+    // Generate Cloud Provider Configs (AWS, GCP, DigitalOcean, Render)
+    try {
+      const configs = await generateCloudConfigs(folderPath, projectType, project.name);
+      if (configs.length > 0) {
+        await addAction(`Generated cloud configs: ${configs.join(", ")}`);
+      }
+    } catch (e) {
+      console.error("Failed to generate cloud configs:", e);
+    }
+
     // Generate .env.example if missing
     await generateEnvExample(folderPath, addAction);
 
@@ -136,6 +153,18 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 
     // Generate basic tests if missing
     await generateBasicTests(folderPath, projectType, addAction);
+
+    // Generate Advanced Functional Tests (AI-powered)
+    if (process.env.OPENAI_API_KEY) {
+      await logAutoFix(project.id, "Generating functional tests based on API routes...");
+      const testResult = await generateFunctionalTests(folderPath, projectType);
+      if (testResult.success) {
+        await addAction(testResult.message);
+      } else {
+        // Don't fail the whole process, just log it
+        console.log("Functional test generation skipped/failed:", testResult.message);
+      }
+    }
 
     // Ensure dependencies are installed before code repair
     try {
@@ -152,6 +181,19 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         // Increased timeout to 5 minutes for slower environments (Render Free Tier)
         await execAsync("npm install --legacy-peer-deps --no-audit --no-fund", { cwd: folderPath, timeout: 300000 });
         await addAction("Installed project dependencies");
+
+        // Fix security vulnerabilities
+        try {
+          await logAutoFix(project.id, "Fixing security vulnerabilities...");
+          // We use --force to actually fix things, but be careful as it might break things.
+          // For an auto-fixer, maybe just 'npm audit fix' is safer? 
+          // The user requirement says "Fix security vulnerabilities", so let's try standard fix first.
+          await execAsync("npm audit fix", { cwd: folderPath, timeout: 120000 });
+          await addAction("Applied security fixes (npm audit fix)");
+        } catch (auditErr) {
+          // audit fix often exits with non-zero if vulnerabilities remain, which is fine
+          console.warn("npm audit fix completed with warnings:", auditErr);
+        }
       }
     } catch (e) {
       console.error("[AutoFix] Failed to install dependencies:", e);
@@ -202,33 +244,12 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     await fixBrowserEnvironment(folderPath, addAction);
     // ---------------------------
 
-    // --- BROWSER ENVIRONMENT FIX ---
-    // If tests failed due to browser issues, try to configure headless mode
-    try {
-      const isAngular = fs.existsSync(path.join(folderPath, "angular.json"));
-      if (isAngular) {
-        await addAction("Checking Angular test configuration for headless mode...");
-        const karmaConfPath = path.join(folderPath, "karma.conf.js");
-        if (fs.existsSync(karmaConfPath)) {
-          let karmaContent = fs.readFileSync(karmaConfPath, "utf-8");
-          if (!karmaContent.includes("ChromeHeadless")) {
-             // Simple string replacement to add ChromeHeadless
-             if (karmaContent.includes("'Chrome'")) {
-               karmaContent = karmaContent.replace("'Chrome'", "'ChromeHeadless'");
-               fs.writeFileSync(karmaConfPath, karmaContent);
-               await addAction("Updated karma.conf.js to use ChromeHeadless");
-             } else if (karmaContent.includes('"Chrome"')) {
-               karmaContent = karmaContent.replace('"Chrome"', '"ChromeHeadless"');
-               fs.writeFileSync(karmaConfPath, karmaContent);
-               await addAction("Updated karma.conf.js to use ChromeHeadless");
-             }
-          }
-        }
-      }
-    } catch (e) {
-      console.error("Failed to fix browser config:", e);
+    // --- AI PROACTIVE IMPROVEMENTS ---
+    if (process.env.OPENAI_API_KEY) {
+      await logAutoFix(project.id, "Running AI suggestions on key files...");
+      await runAiSuggestionsOnKeyFiles(project, folderPath, addAction);
     }
-    // -------------------------------
+    // ---------------------------------
 
     // --- ENV VARS AUTO-FIX & SYNC ---
     try {
@@ -282,7 +303,16 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     // --------------------------------
 
     // Determine if ready for deploy
-    const readyForDeploy = checkReadyForDeploy(projectType, folderPath);
+    // Re-classify to get updated status
+    const classification = await classifyProject(folderPath);
+    let readyForDeploy = checkReadyForDeploy(classification.projectType, folderPath);
+    
+    // If classification says valid, trust it more
+    if (classification.projectValidity === "valid" && readyForDeploy) {
+       readyForDeploy = true;
+    } else if (classification.projectValidity === "invalid") {
+       readyForDeploy = false;
+    }
 
     const report = buildAutoFixReport(projectType, actions, readyForDeploy);
     await logAutoFix(project.id, `Auto-fix completed. Ready for deploy: ${readyForDeploy}`);
@@ -298,6 +328,10 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       autoFixReport: result.autoFixReport,
       readyForDeploy: result.readyForDeploy ? "true" : "false",
       autoFixedAt: new Date(),
+      // Update classification results too
+      projectType: classification.projectType,
+      projectValidity: classification.projectValidity,
+      validationErrors: JSON.stringify(classification.validationErrors),
     });
     
     return result;
@@ -1230,4 +1264,149 @@ function findFiles(dir: string, ext: string): string[] {
   }
 
   return files;
+}
+
+/**
+ * Run AI suggestions on key files (package.json, server.js, etc.)
+ */
+async function runAiSuggestionsOnKeyFiles(
+  project: Project,
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  const keyFiles = ["package.json", "server.js", "app.js", "index.js", "tsconfig.json", "vite.config.ts", "vite.config.js", "next.config.js"];
+  
+  for (const filename of keyFiles) {
+    const filePath = path.join(folderPath, filename);
+    if (!fs.existsSync(filePath)) continue;
+
+    try {
+      const content = fs.readFileSync(filePath, "utf-8");
+      
+      // Skip if file is too large or empty
+      if (content.length > 20000 || content.trim().length === 0) continue;
+
+      await logAutoFix(project.id, `AI analyzing ${filename}...`);
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: [
+          {
+            role: "system",
+            content: `You are an expert DevOps engineer. You are reviewing a ${project.projectType} project file.
+Your goal is to ensure the file is configured correctly for a production deployment (Docker, Vercel, Render, etc.).
+Return the IMPROVED content of the file.
+- Do NOT change the file name.
+- Do NOT remove essential logic.
+- Do NOT add comments unless necessary.
+- Ensure 'start' and 'build' scripts in package.json are correct.
+- Ensure server listens on process.env.PORT.
+- Fix any broken imports or require statements.
+- Fix any obvious routing issues (e.g. missing app.use, invalid paths).
+- Output ONLY the code, no markdown formatting.`
+          },
+          {
+            role: "user",
+            content: `File: ${filename}\n\n${content}`
+          }
+        ]
+      });
+
+      const improvedContent = response.choices[0]?.message?.content;
+      
+      if (improvedContent && improvedContent !== content) {
+        // Strip markdown code blocks if present
+        const cleanContent = improvedContent.replace(/^```[a-z]*\n/, "").replace(/\n```$/, "");
+        
+        // Basic sanity check: don't replace if it became empty
+        if (cleanContent.trim().length > 0) {
+          fs.writeFileSync(filePath, cleanContent);
+          await addAction(`AI improved configuration in ${filename}`);
+        }
+      }
+    } catch (error) {
+      console.error(`AI suggestion failed for ${filename}:`, error);
+      // Continue to next file
+    }
+  }
+}
+
+/**
+ * Generate docker-compose.yml
+ */
+async function generateDockerCompose(
+  folderPath: string,
+  projectType: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  const composePath = path.join(folderPath, "docker-compose.yml");
+  if (fs.existsSync(composePath)) {
+    await addAction("docker-compose.yml already exists");
+    return;
+  }
+
+  let content = `version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+`;
+
+  if (projectType === "node_backend") {
+    content += `      - PORT=3000
+`;
+  }
+
+  fs.writeFileSync(composePath, content);
+  await addAction("Generated docker-compose.yml");
+}
+
+/**
+ * Ensure health check endpoint exists for Node backends
+ */
+async function ensureHealthCheck(
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  const entryFiles = ["server.js", "app.js", "index.js", "main.js"];
+  let entryFile = entryFiles.find(f => fs.existsSync(path.join(folderPath, f)));
+
+  if (!entryFile) return;
+
+  const filePath = path.join(folderPath, entryFile);
+  let content = fs.readFileSync(filePath, "utf-8");
+
+  // Simple check if /health or /ping exists
+  if (!content.includes("'/health'") && !content.includes('"/health"') && !content.includes("'/ping'")) {
+    // Try to insert before app.listen
+    const listenRegex = /app\.listen\(/;
+    if (listenRegex.test(content)) {
+      const healthEndpoint = `
+app.get('/health', (req, res) => {
+  const memoryUsage = process.memoryUsage();
+  const cpuUsage = process.cpuUsage();
+  res.status(200).json({ 
+    status: 'ok', 
+    timestamp: new Date().toISOString(),
+    metrics: {
+      memory: {
+        rss: memoryUsage.rss,
+        heapTotal: memoryUsage.heapTotal,
+        heapUsed: memoryUsage.heapUsed
+      },
+      cpu: cpuUsage,
+      uptime: process.uptime()
+    }
+  });
+});
+
+`;
+      content = content.replace(listenRegex, match => healthEndpoint + match);
+      fs.writeFileSync(filePath, content);
+      await addAction(`Added /health endpoint to ${entryFile}`);
+    }
+  }
 }

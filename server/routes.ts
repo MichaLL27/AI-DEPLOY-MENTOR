@@ -21,14 +21,22 @@ import multer from "multer";
 import * as fs from "fs";
 import * as path from "path";
 import * as crypto from "crypto";
+import { openai } from "./lib/openai";
 
 import * as os from "os";
+import { exec } from "child_process";
+import { promisify } from "util";
+
+const execAsync = promisify(exec);
 
 import { cloneAndZipRepository } from "./services/githubService";
+import { importProjectFromUrl } from "./services/importService";
 
 import { autoFixEnvVars, detectEnvVars } from "./services/envService";
 import { syncEnvVarsToVercel } from "./services/vercelService";
 import { syncEnvVarsToRailway } from "./services/railwayService";
+
+import { generateFunctionalTests } from "./services/testGeneratorService";
 
 // Configure multer for ZIP uploads
 // On Vercel, we must use /tmp. On local, we can use uploads/
@@ -84,6 +92,9 @@ export async function registerRoutes(
       vercel: !!process.env.VERCEL_TOKEN,
       render: !!process.env.RENDER_API_TOKEN,
       railway: !!process.env.RAILWAY_TOKEN,
+      digitalocean: !!process.env.DO_TOKEN,
+      aws: !!process.env.AWS_ACCESS_KEY_ID,
+      gcp: !!process.env.GOOGLE_APPLICATION_CREDENTIALS,
     });
   });
 
@@ -131,47 +142,29 @@ export async function registerRoutes(
       const validatedData = insertProjectSchema.parse(req.body);
       const project = await storage.createProject(validatedData);
 
-      // Handle GitHub Import
-      if (validatedData.sourceType === "github" && validatedData.sourceValue) {
+      // Handle Imports (GitHub, Replit, Lovable, Base44)
+      if (["github", "replit", "lovable", "base44"].includes(validatedData.sourceType) && validatedData.sourceValue) {
         try {
-          console.log(`Starting GitHub import for ${project.id} from ${validatedData.sourceValue}`);
+          console.log(`Starting import for ${project.id} from ${validatedData.sourceType}`);
           
-          const zipPath = await cloneAndZipRepository(validatedData.sourceValue, project.id);
-          
-          // Update project with ZIP path
-          let updatedProject = await storage.updateProject(project.id, {
-            zipStoredPath: zipPath,
-            zipOriginalFilename: "github-source.zip",
-            zipAnalysisStatus: "pending",
-          } as any);
+          const updatedProject = await importProjectFromUrl(
+            project.id,
+            validatedData.sourceValue,
+            validatedData.sourceType as any
+          );
 
-          // Analyze the imported project
-          const analysis = await analyzeZipProject(updatedProject!);
-          
-          updatedProject = await storage.updateProject(project.id, {
-            zipAnalysisStatus: "success",
-            projectType: analysis.projectType,
-            projectValidity: analysis.projectValidity,
-            validationErrors: JSON.stringify(analysis.validationErrors),
-            normalizedStatus: analysis.normalizedStatus,
-            normalizedFolderPath: analysis.normalizedFolderPath,
-            normalizedReport: analysis.normalizedReport,
-            readyForDeploy: analysis.readyForDeploy ? "true" : "false",
-            zipAnalysisReport: analysis.analysisReport,
-          } as any);
-
-          console.log(`GitHub import successful for ${project.id}`);
+          console.log(`Import successful for ${project.id}`);
           return res.status(201).json(updatedProject);
 
         } catch (error) {
-          console.error("GitHub import failed:", error);
+          console.error("Import failed:", error);
           
-          const failedProject = await storage.updateProject(project.id, {
-            zipAnalysisStatus: "failed",
-            zipAnalysisReport: `GitHub import failed: ${error instanceof Error ? error.message : String(error)}`,
-          } as any);
+          // Delete the project since import failed so we don't have empty projects
+          await storage.deleteProject(project.id);
           
-          return res.status(201).json(failedProject);
+          return res.status(400).json({ 
+            error: `Import failed: ${error instanceof Error ? error.message : String(error)}` 
+          });
         }
       }
 
@@ -249,8 +242,8 @@ export async function registerRoutes(
         return res.status(404).json({ error: "Project not found" });
       }
 
-      // Only allow QA on registered or failed projects
-      if (!["registered", "qa_failed", "qa_passed"].includes(project.status)) {
+      // Only allow QA on registered, failed, or deployed projects (allow re-verification)
+      if (!["registered", "qa_failed", "qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
         return res.status(400).json({ 
           error: `Cannot run QA on project with status: ${project.status}` 
         });
@@ -276,6 +269,7 @@ export async function registerRoutes(
               normalizedReport: analysis.normalizedReport,
               readyForDeploy: analysis.readyForDeploy ? "true" : "false",
               zipAnalysisReport: analysis.analysisReport,
+              structureJson: analysis.structureJson,
             } as any);
             
             if (updated) {
@@ -494,18 +488,21 @@ export async function registerRoutes(
       // Update status to building
       await storage.updateProject(projectId, { mobileIosStatus: "building" });
 
-      try {
-        const result = await generateIosWrapper(project);
-        const updatedProject = await storage.updateProject(projectId, {
-          mobileIosStatus: result.status,
-          mobileIosDownloadUrl: result.downloadPath,
+      // Start generation in background (async)
+      generateIosWrapper(project)
+        .then(async (result) => {
+          await storage.updateProject(projectId, {
+            mobileIosStatus: result.status,
+            mobileIosDownloadUrl: result.downloadPath,
+          });
+        })
+        .catch(async (error) => {
+          console.error("iOS generation error:", error);
+          await storage.updateProject(projectId, { mobileIosStatus: "failed" });
         });
-        res.json(updatedProject);
-      } catch (error) {
-        console.error("iOS generation error:", error);
-        await storage.updateProject(projectId, { mobileIosStatus: "failed" });
-        return res.status(500).json({ error: `Failed to generate iOS wrapper: ${error instanceof Error ? error.message : "Unknown error"}` });
-      }
+
+      // Return immediately with jobId
+      res.json({ jobId: projectId, status: "building" });
     } catch (error) {
       console.error("Error in iOS generation route:", error);
       res.status(500).json({ error: "Failed to generate iOS wrapper" });
@@ -523,8 +520,8 @@ export async function registerRoutes(
       }
 
       res.json({
-        mobileIosStatus: project.mobileIosStatus,
-        mobileIosDownloadUrl: project.mobileIosDownloadUrl,
+        status: project.mobileIosStatus || "pending",
+        downloadUrl: project.mobileIosDownloadUrl,
       });
     } catch (error) {
       console.error("Error fetching iOS status:", error);
@@ -585,19 +582,18 @@ export async function registerRoutes(
       try {
         // Analyze ZIP
         const analysis = await analyzeZipProject(updatedProject!);
-        updatedProject = await storage.updateProject(project.id, {
-          zipAnalysisStatus: "success",
-          projectType: analysis.projectType,
-          projectValidity: analysis.projectValidity,
-          validationErrors: JSON.stringify(analysis.validationErrors),
-          normalizedStatus: analysis.normalizedStatus,
-          normalizedFolderPath: analysis.normalizedFolderPath,
-          normalizedReport: analysis.normalizedReport,
-          readyForDeploy: analysis.readyForDeploy ? "true" : "false",
-          zipAnalysisReport: analysis.analysisReport,
-        } as any);
-
-        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (ready: ${analysis.readyForDeploy})`);
+          updatedProject = await storage.updateProject(project.id, {
+            zipAnalysisStatus: "success",
+            projectType: analysis.projectType,
+            projectValidity: analysis.projectValidity,
+            validationErrors: JSON.stringify(analysis.validationErrors),
+            normalizedStatus: analysis.normalizedStatus,
+            normalizedFolderPath: analysis.normalizedFolderPath,
+            normalizedReport: analysis.normalizedReport,
+            readyForDeploy: analysis.readyForDeploy ? "true" : "false",
+            zipAnalysisReport: analysis.analysisReport,
+            structureJson: analysis.structureJson,
+          } as any);        console.log(`[ZIP] Analyzed project ${project.id}: ${analysis.projectType} (ready: ${analysis.readyForDeploy})`);
       } catch (error) {
         console.error(`[ZIP] Analysis failed for ${project.id}:`, error);
         updatedProject = await storage.updateProject(project.id, {
@@ -975,6 +971,672 @@ export async function registerRoutes(
     } catch (error) {
       console.error("Env autofix error:", error);
       res.status(500).json({ error: "Failed to auto-fix env vars" });
+    }
+  });
+
+  // POST /api/projects/:id/chat - Chat with AI Mentor
+  app.post("/api/projects/:id/chat", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { message, history } = req.body;
+      const project = await storage.getProject(id);
+
+      if (!project) {
+        return res.status(404).json({ error: "Project not found" });
+      }
+
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ error: "OpenAI API key not configured" });
+      }
+
+      // Construct context
+      let context = `Project Name: ${project.name}\n`;
+      context += `Project Type: ${project.projectType}\n`;
+      context += `Status: ${project.status}\n`;
+      
+      if (project.structureJson) {
+        const structureStr = JSON.stringify(project.structureJson);
+        context += `\nProject Structure Summary:\n${structureStr.substring(0, 1000)}...\n`;
+      }
+      
+      if (project.qaReport) {
+        context += `\nQA Report Summary:\n${project.qaReport.substring(0, 1000)}...\n`;
+      }
+
+      if (project.autoFixReport) {
+        context += `\nAuto-Fix Report Summary:\n${project.autoFixReport.substring(0, 1000)}...\n`;
+      }
+
+      const systemPrompt = `You are an expert AI Mentor for the software project "${project.name}".
+Your goal is to help the user understand the project, debug issues, and improve the code.
+You have access to the project's technical context, including its structure, QA status, and auto-fix reports.
+
+Context:
+${context}
+
+CRITICAL INSTRUCTIONS FOR ANALYSIS & GUIDANCE:
+1. DIAGNOSIS: If the project failed to build, deploy, or pass QA, explain EXACTLY why based on the logs and reports. Don't just say "it failed", explain the root cause (e.g., "Missing environment variable DATABASE_URL", "Syntax error in line 42").
+2. GAP ANALYSIS: Even if the project runs, analyze if it is "production-ready". Point out missing best practices, security vulnerabilities, or missing environment variables. Tell the user what is missing for the project to work PERFECTLY.
+3. DEEP LOGIC ANALYSIS: Don't just look at syntax. Analyze the BUSINESS LOGIC. Ask yourself:
+   - Does the authentication flow actually protect routes?
+   - Are database transactions used where data integrity matters?
+   - Are error states handled gracefully in the UI?
+   - If you see a gap, PROACTIVELY suggest a fix or write the code to fix it.
+4. LIMITATIONS & MANUAL INSTRUCTIONS: If a task is beyond your capabilities (e.g., requires external service setup like Firebase/AWS, complex manual logic, or credentials you don't have), explicitly tell the user: "I cannot do this automatically because [reason]. Here are the steps you need to follow manually: ..." and provide a numbered list of instructions.
+
+Answer the user's questions based on this context. Be helpful, concise, and technical.
+You can also perform actions on the project if the user requests them.
+Available actions:
+- Run Auto-Fix: Repairs code, structure, and environment variables.
+- Run QA: Runs quality assurance checks and tests.
+- Deploy: Deploys the project to the configured provider.
+- Read File: Read the content of a specific file to answer questions about the code.
+- Write File: Create or update a file with new content.
+- Install Package: Install a new npm package.
+- Generate Docker Compose: Create a docker-compose.yml file for local development.
+- Patch Security: Run security audit and attempt to fix vulnerabilities.
+
+If the user asks to perform one of these actions, CALL THE CORRESPONDING TOOL/FUNCTION.`;
+
+      const tools = [
+        {
+          type: "function",
+          function: {
+            name: "run_autofix",
+            description: "Run the auto-fix process to repair code and structure issues.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "run_qa",
+            description: "Run Quality Assurance checks and tests.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "deploy_project",
+            description: "Deploy the project to the configured provider.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "read_file",
+            description: "Read the content of a specific file in the project.",
+            parameters: {
+              type: "object",
+              properties: {
+                filePath: {
+                  type: "string",
+                  description: "The relative path of the file to read (e.g., 'src/index.ts')."
+                }
+              },
+              required: ["filePath"]
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "write_file",
+            description: "Create or update a file with new content.",
+            parameters: {
+              type: "object",
+              properties: {
+                filePath: {
+                  type: "string",
+                  description: "The relative path of the file to write (e.g., 'src/components/Button.tsx')."
+                },
+                content: {
+                  type: "string",
+                  description: "The full content to write to the file."
+                }
+              },
+              required: ["filePath", "content"]
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "install_package",
+            description: "Install an npm package in the project.",
+            parameters: {
+              type: "object",
+              properties: {
+                packageName: {
+                  type: "string",
+                  description: "The name of the package to install (e.g., 'axios', 'lodash')."
+                },
+                dev: {
+                  type: "boolean",
+                  description: "Whether to install as a dev dependency (default: false)."
+                }
+              },
+              required: ["packageName"]
+            }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "generate_tests",
+            description: "Generate automated functional tests for the project.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "generate_docker_compose",
+            description: "Generate a docker-compose.yml file for local development with database support.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "patch_security",
+            description: "Run npm audit fix and attempt to patch security vulnerabilities.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "generate_health_check",
+            description: "Generate a /health endpoint and instrument basic metrics.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "run_static_analysis",
+            description: "Run static code analysis (linting) to find logic errors.",
+            parameters: { type: "object", properties: {} }
+          }
+        },
+        {
+          type: "function",
+          function: {
+            name: "generate_deployment_config",
+            description: "Generate deployment configuration (Terraform/CloudFormation) for a specific provider.",
+            parameters: {
+              type: "object",
+              properties: {
+                provider: {
+                  type: "string",
+                  enum: ["aws", "digitalocean", "gcp"],
+                  description: "The cloud provider to generate config for."
+                }
+              },
+              required: ["provider"]
+            }
+          }
+        }
+      ];
+
+      const messages = [
+        { role: "system", content: systemPrompt },
+        ...(history || []),
+        { role: "user", content: message }
+      ];
+
+      const response = await openai.chat.completions.create({
+        model: "gpt-4o",
+        messages: messages as any,
+        tools: tools as any,
+        tool_choice: "auto",
+      });
+
+      const responseMessage = response.choices[0].message;
+
+      // Handle tool calls
+      if (responseMessage.tool_calls) {
+        const toolCall = responseMessage.tool_calls[0];
+        const functionName = toolCall["function"].name;
+        
+        let toolResult = "";
+        
+        if (functionName === "read_file") {
+           const args = JSON.parse(toolCall["function"].arguments);
+           const filePath = args.filePath;
+           let fileContent = "";
+           
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet. Cannot read files.");
+              }
+              
+              const fullPath = path.join(project.normalizedFolderPath, filePath);
+              
+              // Security check
+              if (!fullPath.startsWith(project.normalizedFolderPath)) {
+                 throw new Error("Access denied: Cannot read files outside project directory.");
+              }
+              
+              if (!fs.existsSync(fullPath)) {
+                 throw new Error(`File not found: ${filePath}`);
+              }
+              
+              const stats = await fs.promises.stat(fullPath);
+              if (stats.isDirectory()) {
+                 const files = await fs.promises.readdir(fullPath);
+                 fileContent = `Directory listing for ${filePath}:\n${files.join("\n")}`;
+              } else {
+                 fileContent = await fs.promises.readFile(fullPath, "utf-8");
+                 if (fileContent.length > 20000) {
+                    fileContent = fileContent.substring(0, 20000) + "\n...(truncated)";
+                 }
+              }
+           } catch (err) {
+              fileContent = `Error reading file: ${err instanceof Error ? err.message : String(err)}`;
+           }
+           
+           // For read_file, we want to feed the content back to the AI to get an answer
+           messages.push(responseMessage);
+           messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              content: fileContent
+           });
+           
+           const secondResponse = await openai.chat.completions.create({
+             model: "gpt-4o",
+             messages: messages as any,
+             // Disable tools for the second turn to prevent loops for now
+             tools: undefined 
+           });
+           
+           return res.json({ response: secondResponse.choices[0].message.content });
+        } else if (functionName === "write_file") {
+           const args = JSON.parse(toolCall["function"].arguments);
+           const { filePath, content } = args;
+           
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet. Cannot write files.");
+              }
+              
+              const fullPath = path.join(project.normalizedFolderPath, filePath);
+              
+              // Security check
+              if (!fullPath.startsWith(project.normalizedFolderPath)) {
+                 throw new Error("Access denied: Cannot write files outside project directory.");
+              }
+              
+              // Ensure directory exists
+              await fs.promises.mkdir(path.dirname(fullPath), { recursive: true });
+              
+              await fs.promises.writeFile(fullPath, content, "utf-8");
+              toolResult = `Successfully wrote to ${filePath}.`;
+           } catch (err) {
+              toolResult = `Error writing file: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "install_package") {
+           const args = JSON.parse(toolCall["function"].arguments);
+           const { packageName, dev } = args;
+           
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet. Cannot install packages.");
+              }
+              
+              const flag = dev ? "--save-dev" : "";
+              const command = `npm install ${packageName} ${flag}`;
+              
+              toolResult = `Installing ${packageName}... This might take a moment.`;
+              
+              // Run in background but don't await for the full install in the chat response
+              // or maybe we should await it to confirm success? 
+              // npm install can be slow. Let's await it but with a timeout or just trust it works?
+              // Better to await it so we know if it failed.
+              
+              await execAsync(command, { cwd: project.normalizedFolderPath });
+              toolResult = `Successfully installed ${packageName}.`;
+           } catch (err) {
+              toolResult = `Error installing package: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "generate_tests") {
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet. Cannot generate tests.");
+              }
+              
+              const result = await generateFunctionalTests(project.normalizedFolderPath, project.projectType);
+              
+              if (result.success) {
+                 toolResult = `Success! ${result.message} You can now run 'npm test' to execute them.`;
+              } else {
+                 toolResult = `Failed to generate tests: ${result.message}`;
+              }
+           } catch (err) {
+              toolResult = `Error generating tests: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "generate_docker_compose") {
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet.");
+              }
+              
+              // Simple heuristic for DB type
+              let dbImage = "postgres:15";
+              let dbPort = "5432";
+              let dbEnv = "POSTGRES_PASSWORD=postgres";
+              
+              // Check if project uses mongo
+              const pkgPath = path.join(project.normalizedFolderPath, "package.json");
+              if (fs.existsSync(pkgPath)) {
+                 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+                 const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+                 if (deps.mongoose || deps.mongodb) {
+                    dbImage = "mongo:6";
+                    dbPort = "27017";
+                    dbEnv = "";
+                 } else if (deps.mysql || deps.mysql2) {
+                    dbImage = "mysql:8";
+                    dbPort = "3306";
+                    dbEnv = "MYSQL_ROOT_PASSWORD=root";
+                 }
+              }
+              
+              const composeContent = `version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=${dbImage.startsWith('postgres') ? 'postgresql://postgres:postgres@db:5432/app' : dbImage.startsWith('mongo') ? 'mongodb://db:27017/app' : 'mysql://root:root@db:3306/app'}
+      - NODE_ENV=development
+    depends_on:
+      - db
+    volumes:
+      - .:/app
+      - /app/node_modules
+
+  db:
+    image: ${dbImage}
+    ports:
+      - "${dbPort}:${dbPort}"
+    environment:
+      - ${dbEnv}
+    volumes:
+      - db_data:/var/lib/${dbImage.startsWith('postgres') ? 'postgresql/data' : 'mysql'}
+
+volumes:
+  db_data:
+`;
+              const composePath = path.join(project.normalizedFolderPath, "docker-compose.yml");
+              await fs.promises.writeFile(composePath, composeContent);
+              toolResult = "Successfully generated docker-compose.yml with database support.";
+           } catch (err) {
+              toolResult = `Error generating docker-compose: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "patch_security") {
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet.");
+              }
+              
+              toolResult = "Running security audit and fix... This may take a minute.";
+              
+              // Run npm audit fix
+              // We use --force if the user explicitly asked for it, but let's stick to safe fixes first
+              await execAsync("npm audit fix", { cwd: project.normalizedFolderPath });
+              
+              toolResult = "Successfully ran 'npm audit fix'. Security vulnerabilities have been patched where possible.";
+           } catch (err) {
+              toolResult = `Error patching security: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "generate_health_check") {
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet.");
+              }
+              
+              // Detect framework
+              let framework = "express";
+              const pkgPath = path.join(project.normalizedFolderPath, "package.json");
+              if (fs.existsSync(pkgPath)) {
+                 const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+                 const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+                 if (deps.next) framework = "nextjs";
+                 else if (deps.fastify) framework = "fastify";
+                 else if (deps.flask) framework = "flask"; // Python usually
+              }
+              
+              if (framework === "express") {
+                 const healthCode = `
+// Health Check Endpoint
+app.get('/health', (req, res) => {
+  const healthcheck = {
+    uptime: process.uptime(),
+    message: 'OK',
+    timestamp: Date.now(),
+    memory: process.memoryUsage()
+  };
+  try {
+    res.send(healthcheck);
+  } catch (error) {
+    healthcheck.message = error;
+    res.status(503).send();
+  }
+});
+`;
+                 toolResult = `I have generated the code for an Express health check. Please add this to your main server file:\n\n${healthCode}`;
+              } else if (framework === "nextjs") {
+                 const healthPath = path.join(project.normalizedFolderPath, "pages/api/health.ts");
+                 const healthCode = `
+import type { NextApiRequest, NextApiResponse } from 'next';
+
+export default function handler(req: NextApiRequest, res: NextApiResponse) {
+  res.status(200).json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: Date.now(),
+    memory: process.memoryUsage()
+  });
+}
+`;
+                 await fs.promises.mkdir(path.dirname(healthPath), { recursive: true });
+                 await fs.promises.writeFile(healthPath, healthCode);
+                 toolResult = "Successfully created pages/api/health.ts with metrics instrumentation.";
+              } else {
+                 toolResult = `I cannot automatically generate a health check for ${framework} yet, but here is the logic you need: Create a /health route that returns JSON with uptime and memory usage.`;
+              }
+           } catch (err) {
+              toolResult = `Error generating health check: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "run_static_analysis") {
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet.");
+              }
+              
+              // Try to run eslint if available, otherwise install and run
+              // For speed, let's assume we can run npx eslint
+              toolResult = "Running static analysis (ESLint)...";
+              
+              // We use npx to avoid needing it in package.json, but it might be slow
+              // A better approach is to check if it's in package.json
+              const { stdout, stderr } = await execAsync("npx eslint . --ext .js,.jsx,.ts,.tsx --format json", { cwd: project.normalizedFolderPath });
+              
+              // Parse JSON output to give a summary
+              try {
+                 const results = JSON.parse(stdout);
+                 const errorCount = results.reduce((acc: number, curr: any) => acc + curr.errorCount, 0);
+                 const warningCount = results.reduce((acc: number, curr: any) => acc + curr.warningCount, 0);
+                 toolResult = `Static Analysis Complete:\nErrors: ${errorCount}\nWarnings: ${warningCount}\n\nRun 'npx eslint .' to see details.`;
+              } catch (e) {
+                 toolResult = `Static Analysis Output:\n${stdout.substring(0, 500)}...`;
+              }
+           } catch (err) {
+              // ESLint exits with 1 if errors found
+              toolResult = `Static Analysis found issues (or failed to run): ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "generate_deployment_config") {
+           const args = JSON.parse(toolCall["function"].arguments);
+           const { provider } = args;
+           
+           let configContent = "";
+           let fileName = "";
+           
+           if (provider === "aws") {
+              fileName = "main.tf";
+              configContent = `
+provider "aws" {
+  region = "us-east-1"
+}
+
+resource "aws_instance" "app_server" {
+  ami           = "ami-0c55b159cbfafe1f0" # Amazon Linux 2
+  instance_type = "t2.micro"
+
+  user_data = <<-EOF
+              #!/bin/bash
+              yum update -y
+              curl -sL https://rpm.nodesource.com/setup_16.x | bash -
+              yum install -y nodejs git
+              git clone <YOUR_REPO_URL> /app
+              cd /app
+              npm install
+              npm start
+              EOF
+
+  tags = {
+    Name = "AI-Deploy-App"
+  }
+}
+`;
+           } else if (provider === "digitalocean") {
+              fileName = "main.tf";
+              configContent = `
+terraform {
+  required_providers {
+    digitalocean = {
+      source = "digitalocean/digitalocean"
+      version = "~> 2.0"
+    }
+  }
+}
+
+provider "digitalocean" {
+  token = var.do_token
+}
+
+resource "digitalocean_droplet" "web" {
+  image  = "ubuntu-20-04-x64"
+  name   = "ai-deploy-web"
+  region = "nyc1"
+  size   = "s-1vcpu-1gb"
+
+  user_data = <<-EOF
+              #!/bin/bash
+              apt-get update
+              curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+              apt-get install -y nodejs git
+              git clone <YOUR_REPO_URL> /app
+              cd /app
+              npm install
+              npm start
+              EOF
+}
+`;
+           }
+           
+           try {
+              if (!project.normalizedFolderPath) {
+                 throw new Error("Project is not normalized yet.");
+              }
+              const fullPath = path.join(project.normalizedFolderPath, fileName);
+              await fs.promises.writeFile(fullPath, configContent);
+              toolResult = `Successfully generated ${fileName} for ${provider}. You can use this with Terraform to provision infrastructure.`;
+           } catch (err) {
+              toolResult = `Error generating config: ${err instanceof Error ? err.message : String(err)}`;
+           }
+        } else if (functionName === "run_autofix") {
+          // Trigger auto-fix
+          if (project.normalizedFolderPath) {
+             // Update status to running
+             await storage.updateProject(id, { 
+               autoFixStatus: "running",
+               autoFixReport: "Auto-fix started by AI Mentor...",
+               autoFixLogs: `[${new Date().toISOString()}] Auto-fix process started by AI Mentor.\n`
+             });
+             
+             // Run in background
+             autoFixProject(project).catch(err => {
+               console.error(`[AutoFix] Background process crashed for ${id}:`, err);
+               storage.updateProject(id, {
+                 autoFixStatus: "failed",
+                 autoFixReport: `Background process crashed: ${err instanceof Error ? err.message : String(err)}`
+               });
+             });
+             
+             toolResult = "I have started the Auto-Fix process. You can see the progress in the dashboard.";
+          } else {
+             toolResult = "I cannot run Auto-Fix because the project is not normalized yet.";
+          }
+        } else if (functionName === "run_qa") {
+           // Trigger QA
+           // We can't easily await the full QA here as it might take time, but QA is usually faster than AutoFix.
+           // However, for chat responsiveness, let's trigger it and tell the user.
+           // Actually, the existing QA route awaits it. Let's try to await it if it's fast, or just trigger.
+           // Let's trigger it similar to the route logic but we need to be careful about response time.
+           // Better: Just tell the frontend to trigger it? No, the user wants the AI to do it.
+           
+           // Let's just update status and run it.
+           if (["registered", "qa_failed", "qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
+              await storage.updateProject(id, { status: "qa_running" });
+              
+              // Run in background so chat doesn't timeout
+              runQaOnProject(project).then(async (qaResult) => {
+                 await storage.updateProject(id, {
+                    status: qaResult.passed ? "qa_passed" : "qa_failed",
+                    qaReport: qaResult.report,
+                 });
+              });
+              
+              toolResult = "I have started the Quality Assurance checks. The status will update shortly.";
+           } else {
+              toolResult = `I cannot run QA right now because the project status is ${project.status}.`;
+           }
+        } else if (functionName === "deploy_project") {
+           if (["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status)) {
+              await storage.updateProject(id, { status: "deploying" });
+              
+              deployProject(project).then(async (deployResult) => {
+                 if (!deployResult.success) {
+                    await storage.updateProject(id, { status: "deploy_failed" });
+                 } else {
+                    await storage.updateProject(id, {
+                       status: "deployed",
+                       deployedUrl: deployResult.deployedUrl,
+                    });
+                 }
+              });
+              
+              toolResult = "I have initiated the deployment process. Good luck!";
+           } else {
+              toolResult = "I cannot deploy the project yet. Please ensure it has passed QA or is in a valid state.";
+           }
+        }
+
+        // Return the tool result as the final message
+        return res.json({ response: toolResult, action: functionName });
+      }
+
+      res.json({ response: responseMessage.content });
+    } catch (error) {
+      console.error("Error in chat route:", error);
+      res.status(500).json({ error: "Failed to process chat request" });
     }
   });
 

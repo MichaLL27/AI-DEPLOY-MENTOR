@@ -1,6 +1,6 @@
 import type { SourceType } from "@shared/schema";
 import { SiGithub, SiReplit } from "react-icons/si";
-import { FileArchive, Globe } from "lucide-react";
+import { FileArchive, Globe, Heart, Database } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 interface SourceIconProps {
@@ -24,7 +24,17 @@ const iconMap: Record<SourceType, {
     label: "Replit",
     colorClass: "text-orange-500"
   },
-  zip: { 
+  lovable: {
+    icon: Heart,
+    label: "Lovable",
+    colorClass: "text-pink-500"
+  },
+  base44: {
+    icon: Database,
+    label: "Base44",
+    colorClass: "text-indigo-500"
+  },
+  zip: {  
     icon: FileArchive, 
     label: "ZIP Archive",
     colorClass: "text-yellow-600 dark:text-yellow-500"

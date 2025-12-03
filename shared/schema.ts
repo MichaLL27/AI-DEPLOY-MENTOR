@@ -15,10 +15,10 @@ export const projectStatusValues = [
 
 export type ProjectStatus = (typeof projectStatusValues)[number];
 
-export const deploymentTargetValues = ["auto", "vercel", "render", "railway"] as const;
+export const deploymentTargetValues = ["auto", "vercel", "render", "railway", "digitalocean", "aws", "gcp"] as const;
 export type DeploymentTarget = (typeof deploymentTargetValues)[number];
 
-export const sourceTypeValues = ["github", "replit", "zip", "other"] as const;
+export const sourceTypeValues = ["github", "replit", "lovable", "base44", "zip", "other"] as const;
 export type SourceType = (typeof sourceTypeValues)[number];
 
 export const projects = pgTable("projects", {
@@ -58,6 +58,7 @@ export const projects = pgTable("projects", {
   autoFixedAt: timestamp("auto_fixed_at"),
   qaLogs: text("qa_logs"),
   envVars: json("env_vars").default({}),
+  structureJson: json("structure_json").default({}),
   lastPrNumber: integer("last_pr_number").default(0),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),

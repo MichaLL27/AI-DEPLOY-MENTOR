@@ -9,6 +9,7 @@ import { cloneAndZipRepository } from "./githubService";
 import { analyzeZipProject } from "./zipAnalyzer";
 import { deployToVercel, syncEnvVarsToVercel } from "./vercelService";
 import { deployToRailway, syncEnvVarsToRailway } from "./railwayService";
+import { deployToDigitalOcean, deployToAWS, deployToGCP } from "./cloudProviders";
 
 /**
  * Deploy Service - Handles project deployments
@@ -915,6 +916,42 @@ export async function deployProject(project: Project): Promise<DeployResult> {
     }
   }
 
+  // 4. Try DigitalOcean (if configured)
+  if (target === "digitalocean" || (target === "auto" && process.env.DO_TOKEN && !shouldTryRailway)) {
+    await logDeploy(project.id, "Attempting DigitalOcean deployment...");
+    const doResult = await deployToDigitalOcean(project);
+    if (doResult.success) {
+      await logDeploy(project.id, `DigitalOcean deployment initiated! URL: ${doResult.url}`);
+      return { success: true, deployedUrl: doResult.url || null, deployStatus: "deployed" };
+    } else if (target === "digitalocean") {
+      return { success: false, deployedUrl: null, error: doResult.error };
+    }
+  }
+
+  // 5. Try AWS (if configured)
+  if (target === "aws" || (target === "auto" && process.env.AWS_ACCESS_KEY_ID && !shouldTryRailway)) {
+    await logDeploy(project.id, "Attempting AWS deployment...");
+    const awsResult = await deployToAWS(project);
+    if (awsResult.success) {
+      await logDeploy(project.id, `AWS deployment initiated! URL: ${awsResult.url}`);
+      return { success: true, deployedUrl: awsResult.url || null, deployStatus: "deployed" };
+    } else if (target === "aws") {
+      return { success: false, deployedUrl: null, error: awsResult.error };
+    }
+  }
+
+  // 6. Try GCP (if configured)
+  if (target === "gcp" || (target === "auto" && process.env.GOOGLE_APPLICATION_CREDENTIALS && !shouldTryRailway)) {
+    await logDeploy(project.id, "Attempting GCP deployment...");
+    const gcpResult = await deployToGCP(project);
+    if (gcpResult.success) {
+      await logDeploy(project.id, `GCP deployment initiated! URL: ${gcpResult.url}`);
+      return { success: true, deployedUrl: gcpResult.url || null, deployStatus: "deployed" };
+    } else if (target === "gcp") {
+      return { success: false, deployedUrl: null, error: gcpResult.error };
+    }
+  }
+
   // Fallback: Local Process Deployment (Real execution)
   // await logDeploy(project.id, "No Render configuration found. Starting local deployment (Real-time execution)...");
   // return await deployToLocal(project);
@@ -922,7 +959,7 @@ export async function deployProject(project: Project): Promise<DeployResult> {
   return {
       success: false,
       deployedUrl: null,
-      error: "Deployment failed: No valid cloud deployment configuration found (Vercel/Render) or deployment failed."
+      error: "Deployment failed: No valid cloud deployment configuration found (Vercel/Render/Railway/DO/AWS/GCP) or deployment failed."
   };
 }
 

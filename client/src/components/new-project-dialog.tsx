@@ -3,7 +3,7 @@ import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation } from "@tanstack/react-query";
 import { insertProjectSchema, type InsertProject, sourceTypeValues } from "@shared/schema";
 import { useState, useRef } from "react";
-import { ChevronDown, Upload, Link as LinkIcon, Box, Settings2 } from "lucide-react";
+import { ChevronDown, Upload, Link as LinkIcon, Box, Settings2, Heart, Database } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -55,7 +55,19 @@ const sourceTypeLabels: Record<string, { label: string; icon: IconComponent; pla
     placeholder: "https://replit.com/@username/project",
     description: "Import from a Replit project URL"
   },
-  zip: { 
+  lovable: {
+    label: "Lovable",
+    icon: Heart,
+    placeholder: "https://github.com/username/lovable-project",
+    description: "Import a Lovable project (via GitHub)"
+  },
+  base44: {
+    label: "Base44",
+    icon: Database,
+    placeholder: "https://base44.com/project/...",
+    description: "Import from Base44 platform"
+  },
+  zip: {  
     label: "ZIP Archive", 
     icon: FileArchive, 
     placeholder: "https://example.com/project.zip",

@@ -96,7 +96,10 @@ export async function normalizeProjectStructure(
     };
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
-    console.error(`[Normalizer] Error normalizing project ${project.id}:`, error);
+    console.error(`[Normalizer] CRITICAL ERROR normalizing project ${project.id}:`, error);
+    if (error instanceof Error && error.stack) {
+      console.error(error.stack);
+    }
 
     return {
       normalizedStatus: "failed",

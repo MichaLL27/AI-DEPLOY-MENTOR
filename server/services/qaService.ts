@@ -44,6 +44,8 @@ async function logQa(projectId: string, message: string) {
   }
 }
 
+import { analyzeProjectSecurity } from "./securityService";
+
 /**
  * Run AI-powered QA checks on a project
  * Uses OpenAI to analyze the project source and generate a quality report
@@ -56,7 +58,25 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
 
     let fixes: string[] = [];
     
-    // 1. Run local tests if available
+    // 1. Run Security Analysis
+    let securityReport = "";
+    if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
+      await logQa(project.id, "Running deep security analysis...");
+      const secResult = await analyzeProjectSecurity(project.normalizedFolderPath);
+      securityReport = `Security Score: ${secResult.score}/100\nIssues Found: ${secResult.issues.length}\n\n`;
+      
+      if (secResult.issues.length > 0) {
+        securityReport += "Top Security Issues:\n";
+        secResult.issues.slice(0, 5).forEach(issue => {
+          securityReport += `- [${issue.severity.toUpperCase()}] ${issue.description} (${issue.file})\n  Recommendation: ${issue.recommendation}\n`;
+        });
+      } else {
+        securityReport += "No critical security issues found.\n";
+      }
+      await logQa(project.id, `Security analysis completed. Score: ${secResult.score}`);
+    }
+
+    // 2. Run local tests if available
     let localTestReport = "";
     let localTestsFailed = false;
     if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
@@ -155,6 +175,9 @@ Registration Date: ${project.createdAt}
 
 Local Test Execution Results:
 ${localTestReport || "No local tests executed (project not normalized or no tests found)."}
+
+Security Analysis:
+${securityReport}
 
 Based on the source type and URL, analyze:
 1. Is the source URL properly formatted and accessible?
