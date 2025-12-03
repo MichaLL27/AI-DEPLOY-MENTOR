@@ -697,30 +697,26 @@ export async function registerRoutes(
       }
 
       // Set running status
-      await storage.updateProject(id, { autoFixStatus: "running" });
+      const updatedProject = await storage.updateProject(id, { 
+        autoFixStatus: "running",
+        autoFixReport: "Auto-fix started in background...",
+        autoFixLogs: `[${new Date().toISOString()}] Auto-fix process started.\n`
+      });
 
-      try {
-        const result = await autoFixProject(project);
-        const updatedProject = await storage.updateProject(id, {
-          autoFixStatus: result.autoFixStatus,
-          autoFixReport: result.autoFixReport,
-          readyForDeploy: result.readyForDeploy ? "true" : "false",
-          autoFixedAt: new Date(),
-        });
-
-        console.log(`[AutoFix] Fixed project ${id}: ready=${result.readyForDeploy}`);
-        res.json(updatedProject);
-      } catch (error) {
-        console.error(`[AutoFix] Error fixing project ${id}:`, error);
-        const updatedProject = await storage.updateProject(id, {
+      // Run in background (fire and forget)
+      // The service now handles updating the DB with success/failure
+      autoFixProject(project).catch(err => {
+        console.error(`[AutoFix] Background process crashed for ${id}:`, err);
+        storage.updateProject(id, {
           autoFixStatus: "failed",
-          autoFixReport: `Auto-fix failed: ${error instanceof Error ? error.message : "Unknown error"}`,
+          autoFixReport: `Background process crashed: ${err instanceof Error ? err.message : String(err)}`
         });
-        res.status(500).json(updatedProject);
-      }
+      });
+
+      res.status(202).json(updatedProject);
     } catch (error) {
       console.error("Error in auto-fix route:", error);
-      res.status(500).json({ error: "Failed to run auto-fix" });
+      res.status(500).json({ error: "Failed to start auto-fix" });
     }
   });
 

@@ -54,11 +54,17 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
 
   if (!project.normalizedFolderPath) {
     await logAutoFix(project.id, "Error: No normalized folder path found.");
-    return {
+    const result: AutoFixResult = {
       autoFixStatus: "failed",
       autoFixReport: "No normalized folder path found. Run normalization first.",
       readyForDeploy: false,
     };
+    await storage.updateProject(project.id, {
+      autoFixStatus: result.autoFixStatus,
+      autoFixReport: result.autoFixReport,
+      readyForDeploy: "false",
+    });
+    return result;
   }
 
   const folderPath = project.normalizedFolderPath;
@@ -67,18 +73,30 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     await logAutoFix(project.id, `Error: Normalized folder missing at ${folderPath}`);
     // Try to recover if it's a ZIP project and we have the zip file
     if (project.sourceType === "zip" && project.zipStoredPath && fs.existsSync(project.zipStoredPath)) {
-       return {
+       const result: AutoFixResult = {
         autoFixStatus: "failed",
         autoFixReport: `Project files not found on this server. If you are running locally but connected to a remote DB, this is expected. Please re-upload the project locally. (Path: ${folderPath})`,
         readyForDeploy: false,
       };
+      await storage.updateProject(project.id, {
+        autoFixStatus: result.autoFixStatus,
+        autoFixReport: result.autoFixReport,
+        readyForDeploy: "false",
+      });
+      return result;
     }
 
-    return {
+    const result: AutoFixResult = {
       autoFixStatus: "failed",
       autoFixReport: `Normalized folder does not exist: ${folderPath}\n\n**Reason:** The project files are missing from this server.\n**Solution:**\n1. If this is a ZIP project, please delete it and upload it again.\n2. If this is a GitHub project, the system will attempt to re-clone it during deployment.`,
       readyForDeploy: false,
     };
+    await storage.updateProject(project.id, {
+      autoFixStatus: result.autoFixStatus,
+      autoFixReport: result.autoFixReport,
+      readyForDeploy: "false",
+    });
+    return result;
   }
 
   try {
@@ -123,9 +141,10 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     try {
       const hasNodeModules = fs.existsSync(path.join(folderPath, "node_modules"));
       if (!hasNodeModules && fs.existsSync(path.join(folderPath, "package.json"))) {
-        await logAutoFix(project.id, "Installing dependencies (this may take a minute)...");
+        await logAutoFix(project.id, "Installing dependencies (this may take a few minutes)...");
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 180000 });
+        // Increased timeout to 5 minutes for slower environments (Render Free Tier)
+        await execAsync("npm install --legacy-peer-deps", { cwd: folderPath, timeout: 300000 });
         await addAction("Installed project dependencies");
       }
     } catch (e) {
@@ -145,7 +164,8 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       
       // 1. Try to build
       try {
-        await execAsync("npm run build", { cwd: folderPath, timeout: 60000 });
+        // Increased timeout to 3 minutes for slower environments
+        await execAsync("npm run build", { cwd: folderPath, timeout: 180000 });
         await addAction("Build successful!");
         buildSuccess = true;
         break; // Exit loop if build succeeds
@@ -261,20 +281,37 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
     const report = buildAutoFixReport(projectType, actions, readyForDeploy);
     await logAutoFix(project.id, `Auto-fix completed. Ready for deploy: ${readyForDeploy}`);
 
-    return {
+    const result: AutoFixResult = {
       autoFixStatus: "success",
       autoFixReport: report,
       readyForDeploy,
     };
+    
+    await storage.updateProject(project.id, {
+      autoFixStatus: result.autoFixStatus,
+      autoFixReport: result.autoFixReport,
+      readyForDeploy: result.readyForDeploy ? "true" : "false",
+      autoFixedAt: new Date(),
+    });
+    
+    return result;
   } catch (error) {
     const errorMsg = error instanceof Error ? error.message : "Unknown error";
     await logAutoFix(project.id, `Auto-fix failed: ${errorMsg}`);
 
-    return {
+    const result: AutoFixResult = {
       autoFixStatus: "failed",
       autoFixReport: `Auto-fix failed: ${errorMsg}`,
       readyForDeploy: false,
     };
+    
+    await storage.updateProject(project.id, {
+      autoFixStatus: result.autoFixStatus,
+      autoFixReport: result.autoFixReport,
+      readyForDeploy: result.readyForDeploy ? "true" : "false",
+    });
+    
+    return result;
   }
 }
 
