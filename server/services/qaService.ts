@@ -1,7 +1,6 @@
 import type { Project } from "@shared/schema";
 import { storage } from "../storage";
 import { openai } from "../lib/openai";
-import pRetry, { AbortError } from "p-retry";
 import * as fs from "fs";
 import * as path from "path";
 import { exec } from "child_process";
@@ -9,6 +8,46 @@ import * as util from "util";
 import { autoFixProject } from "./autoFixService";
 
 const execAsync = util.promisify(exec);
+
+// Simple retry implementation to avoid ESM/CJS interop issues with p-retry
+async function retry<T>(
+  fn: () => Promise<T>,
+  options: { 
+    retries: number; 
+    minTimeout: number; 
+    factor?: number;
+    onFailedAttempt?: (context: { error: any; attemptNumber: number }) => void 
+  }
+): Promise<T> {
+  let lastError: any;
+  let delay = options.minTimeout;
+
+  for (let i = 0; i <= options.retries; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      
+      // If this was the last attempt, throw immediately
+      if (i === options.retries) break;
+
+      if (options.onFailedAttempt) {
+        try {
+          options.onFailedAttempt({ error, attemptNumber: i + 1 });
+        } catch (e) {
+          // If onFailedAttempt throws, stop retrying (simulates AbortError)
+          throw e; 
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, delay));
+      if (options.factor) {
+        delay *= options.factor;
+      }
+    }
+  }
+  throw lastError;
+}
 
 export interface QaResult {
   passed: boolean;
@@ -130,7 +169,7 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
     }
 
     await logQa(project.id, "Generating AI QA Report...");
-    let report = await pRetry(
+    let report = await retry(
       async () => {
         // Using GPT-4o for best balance of code analysis capability and speed
         const response = await openai.chat.completions.create({
@@ -196,12 +235,11 @@ Provide a comprehensive QA report.`
       {
         retries: 3,
         minTimeout: 1000,
-        maxTimeout: 10000,
         factor: 2,
         onFailedAttempt: (context) => {
           const error = context.error as Error;
           if (!isRateLimitError(error)) {
-            throw new AbortError(error.message);
+            throw error; // Stop retrying if it's not a rate limit error
           }
           console.log(`QA retry attempt ${context.attemptNumber} failed. Retrying...`);
         },
