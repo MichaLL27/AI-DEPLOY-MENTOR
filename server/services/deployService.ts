@@ -505,11 +505,25 @@ async function getRenderOwnerId(token: string): Promise<{ ownerId: string | null
     }
 
     const data = await response.json() as any[];
+    console.log("[Render] Owners response:", JSON.stringify(data, null, 2));
+
     // Return the first owner (usually the user themselves)
-    if (data && data.length > 0) {
-      return { ownerId: data[0].id };
+    if (Array.isArray(data) && data.length > 0) {
+      const item = data[0];
+      
+      // Check for nested owner object (Render API v1 structure)
+      if (item.owner && item.owner.id) {
+        return { ownerId: item.owner.id };
+      }
+      
+      // Check for direct id (fallback)
+      if (item.id) {
+        return { ownerId: item.id };
+      }
+
+      return { ownerId: null, error: "Render Owner object is missing 'id' property. Response: " + JSON.stringify(item) };
     }
-    return { ownerId: null, error: "No owners found for this Render account." };
+    return { ownerId: null, error: "No owners found for this Render account. Response: " + JSON.stringify(data) };
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error);
     console.error("Error fetching Render owner ID:", msg);
@@ -541,8 +555,9 @@ async function createRenderService(project: Project): Promise<{ success: boolean
     // 0. Get Owner ID
     const ownerResult = await getRenderOwnerId(renderToken);
     if (!ownerResult.ownerId) {
-      await logDeploy(project.id, `Failed to retrieve Render Owner ID: ${ownerResult.error}`);
-      return { success: false, error: `Failed to retrieve Render Owner ID: ${ownerResult.error}` };
+      const errorMsg = ownerResult.error || "Unknown error (Owner ID missing)";
+      await logDeploy(project.id, `Failed to retrieve Render Owner ID: ${errorMsg}`);
+      return { success: false, error: `Failed to retrieve Render Owner ID: ${errorMsg}` };
     }
     const ownerId = ownerResult.ownerId;
 
@@ -559,8 +574,11 @@ async function createRenderService(project: Project): Promise<{ success: boolean
       serviceDetails: {
         env: "node",
         region: "oregon", // Default
-        buildCommand: "npm install && npm run build",
-        startCommand: "npm start",
+        plan: "free", // Explicitly request free plan
+        envSpecificDetails: {
+          buildCommand: "npm install && npm run build",
+          startCommand: "npm start",
+        },
         envVars: [
           ...dbEnvVars,
           { key: "NODE_ENV", value: "production" }

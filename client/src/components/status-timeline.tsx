@@ -85,7 +85,7 @@ function getStepState(
 
 export function StatusTimeline({ project }: StatusTimelineProps) {
   return (
-    <div className="w-full overflow-x-auto pb-6 pt-2">
+    <div className="w-full overflow-x-auto pb-6 pt-2 scrollbar-hide">
       <div className="flex items-center justify-between min-w-[700px] px-4" data-testid="status-timeline">
         {steps.map((step, index) => {
           const state = getStepState(step.id, project);
@@ -96,29 +96,29 @@ export function StatusTimeline({ project }: StatusTimelineProps) {
               <div className="flex flex-col items-center relative z-10 w-full">
                 <div
                   className={cn(
-                    "flex items-center justify-center w-8 h-8 rounded-full border-2 transition-all duration-500 z-20 bg-background",
-                    state === "completed" && "bg-primary border-primary text-primary-foreground shadow-[0_0_10px_rgba(0,0,0,0.1)] dark:shadow-[0_0_15px_rgba(255,255,255,0.2)]",
-                    state === "current" && "border-primary text-primary ring-4 ring-primary/20 scale-110",
-                    state === "running" && "border-blue-500 text-blue-500 animate-pulse",
+                    "flex items-center justify-center w-9 h-9 rounded-full border-2 transition-all duration-500 z-20 bg-background",
+                    state === "completed" && "bg-primary border-primary text-primary-foreground shadow-[0_0_15px_rgba(var(--primary),0.3)]",
+                    state === "current" && "border-primary text-primary ring-4 ring-primary/10 scale-110",
+                    state === "running" && "border-blue-500 text-blue-500 animate-pulse ring-4 ring-blue-500/10",
                     state === "failed" && "border-destructive text-destructive bg-destructive/10",
-                    state === "pending" && "border-muted-foreground/30 text-muted-foreground/30"
+                    state === "pending" && "border-muted-foreground/20 text-muted-foreground/20 bg-muted/10"
                   )}
                 >
-                  {state === "completed" && <CheckCircle2 className="h-4 w-4" />}
-                  {state === "running" && <Loader2 className="h-4 w-4 animate-spin" />}
-                  {state === "failed" && <AlertCircle className="h-4 w-4" />}
+                  {state === "completed" && <CheckCircle2 className="h-5 w-5" />}
+                  {state === "running" && <Loader2 className="h-5 w-5 animate-spin" />}
+                  {state === "failed" && <AlertCircle className="h-5 w-5" />}
                   {(state === "current" || state === "pending") && (
-                    <div className={cn("h-2.5 w-2.5 rounded-full", state === "current" ? "bg-primary" : "bg-muted-foreground/30")} />
+                    <div className={cn("h-2.5 w-2.5 rounded-full", state === "current" ? "bg-primary" : "bg-muted-foreground/20")} />
                   )}
                 </div>
                 <span
                   className={cn(
-                    "text-[10px] uppercase tracking-wider mt-3 font-semibold whitespace-nowrap absolute top-8 transition-colors duration-300",
+                    "text-[10px] uppercase tracking-wider mt-3 font-bold whitespace-nowrap absolute top-9 transition-colors duration-300",
                     state === "completed" && "text-primary",
                     state === "current" && "text-primary",
                     state === "running" && "text-blue-600",
                     state === "failed" && "text-destructive",
-                    state === "pending" && "text-muted-foreground/50"
+                    state === "pending" && "text-muted-foreground/40"
                   )}
                 >
                   {step.label}
@@ -126,7 +126,7 @@ export function StatusTimeline({ project }: StatusTimelineProps) {
               </div>
 
               {!isLast && (
-                <div className="absolute left-[50%] w-full h-[2px] top-4 -translate-y-1/2 z-0">
+                <div className="absolute left-[50%] w-full h-[2px] top-[18px] -translate-y-1/2 z-0">
                   <div className="w-full h-full bg-muted/30" />
                   <div 
                     className={cn(

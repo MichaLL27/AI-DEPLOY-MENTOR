@@ -426,349 +426,349 @@ export default function ProjectDetail() {
   ] as any[];
 
   return (
-    <div className="container max-w-6xl mx-auto py-8 px-4">
-      <div className="mb-8">
-        <Link href="/">
-          <Button variant="ghost" size="sm" className="mb-4" data-testid="button-back">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Projects
-          </Button>
-        </Link>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="text-2xl font-bold text-primary">
-                {project.name.charAt(0).toUpperCase()}
-              </span>
+    <div className="container max-w-6xl mx-auto py-8 px-4 space-y-8">
+      {/* Header Section */}
+      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-950 shadow-sm">
+        <div className="absolute inset-0 bg-grid-slate-200/50 dark:bg-grid-slate-800/50 [mask-image:linear-gradient(0deg,white,rgba(255,255,255,0.6))] dark:[mask-image:linear-gradient(0deg,rgba(255,255,255,0.1),rgba(255,255,255,0.5))]" />
+        <div className="relative p-6 sm:p-8">
+          <div className="flex flex-col gap-6">
+            <div className="flex items-center justify-between">
+              <Link href="/">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground -ml-2" data-testid="button-back">
+                  <ArrowLeft className="h-4 w-4 mr-2" />
+                  Back to Projects
+                </Button>
+              </Link>
+              <div className="flex items-center gap-2">
+                {isDeployed && project.deployedUrl && (
+                  <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
+                    <Button variant="outline" size="sm" className="bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm">
+                      <ExternalLink className="h-3.5 w-3.5 mr-2" />
+                      View Live App
+                    </Button>
+                  </a>
+                )}
+              </div>
             </div>
-            <div>
-              <h1 
-                className="text-2xl sm:text-3xl font-bold tracking-tight"
-                data-testid="text-project-title"
-              >
-                {project.name}
-              </h1>
-              <div className="flex items-center gap-3 mt-1">
-                <SourceIcon sourceType={project.sourceType} />
-                <StatusBadge status={project.status} />
+
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
+              <div className="flex items-start gap-5">
+                <div className="h-16 w-16 rounded-2xl bg-gradient-to-br from-primary/20 to-primary/5 flex items-center justify-center shadow-inner border border-primary/10">
+                  <span className="text-3xl font-bold text-primary">
+                    {project.name.charAt(0).toUpperCase()}
+                  </span>
+                </div>
+                <div className="space-y-2">
+                  <h1 
+                    className="text-3xl sm:text-4xl font-bold tracking-tight text-foreground"
+                    data-testid="text-project-title"
+                  >
+                    {project.name}
+                  </h1>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <SourceIcon sourceType={project.sourceType} />
+                    <StatusBadge status={project.status} />
+                    <span className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3.5 w-3.5" />
+                      Updated {formatDistanceToNow(new Date(project.updatedAt), { addSuffix: true })}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                {canAutoFix && (
+                  <Button
+                    onClick={() => autoFixMutation.mutate()}
+                    disabled={isAutoFixing}
+                    className="bg-purple-600 hover:bg-purple-700 text-white shadow-sm"
+                    data-testid="button-auto-fix"
+                  >
+                    {isAutoFixing ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Wand2 className="h-4 w-4 mr-2" />
+                    )}
+                    Auto-fix Project
+                  </Button>
+                )}
+
+                {canRunQa && (
+                  <Button
+                    variant={canAutoFix ? "outline" : "default"}
+                    onClick={() => runQaMutation.mutate()}
+                    disabled={isRunningQa}
+                    className="bg-white dark:bg-slate-800 shadow-sm"
+                    data-testid="button-run-qa"
+                  >
+                    {isRunningQa ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <PlayCircle className="h-4 w-4 mr-2" />
+                    )}
+                    Run QA
+                  </Button>
+                )}
+
+                {canDeploy && (
+                  <Button
+                    variant={project.status === "qa_failed" ? "destructive" : "default"}
+                    onClick={() => deployMutation.mutate()}
+                    disabled={isDeploying}
+                    className="shadow-sm"
+                    data-testid="button-deploy"
+                  >
+                    {isDeploying ? (
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    ) : (
+                      <Rocket className="h-4 w-4 mr-2" />
+                    )}
+                    {project.status === "qa_failed" ? "Deploy Anyway" : (isDeployed ? "Redeploy" : "Deploy")}
+                  </Button>
+                )}
               </div>
             </div>
           </div>
-          
-          {isDeployed && project.deployedUrl && (
-            <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
-              <Button className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
-                <ExternalLink className="h-4 w-4 mr-2" />
-                View Live App
-              </Button>
-            </a>
+        </div>
+      </div>
+
+      {/* Pipeline Status & Actions */}
+      <div className="grid gap-6">
+        <Card className="border-none shadow-md bg-white/50 dark:bg-slate-900/50 backdrop-blur-sm overflow-hidden">
+          <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-primary/20 to-transparent" />
+          <CardContent className="p-6 sm:p-8">
+            <div className="mb-8">
+              <DeploymentStepper currentStep={currentStep} steps={steps} />
+            </div>
+
+            {/* Guided Action Center */}
+            <div className="flex flex-col items-center justify-center text-center space-y-6 max-w-2xl mx-auto">
+              <div className="space-y-2">
+                <h3 className="text-2xl font-semibold tracking-tight">
+                  {currentStep === 0 && "Phase 1: Analysis & Repair"}
+                  {currentStep === 1 && "Phase 2: Quality Assurance"}
+                  {currentStep === 2 && "Phase 3: Production Deployment"}
+                  {currentStep === 3 && "Project is Live"}
+                </h3>
+                <p className="text-muted-foreground text-base">
+                  {currentStep === 0 && "We'll scan your code, fix common errors, generate missing config files, and detect environment variables."}
+                  {currentStep === 1 && "We'll run a comprehensive quality assurance check to ensure your app is stable and bug-free."}
+                  {currentStep === 2 && "We'll sync your environment variables and push your application to the cloud."}
+                  {currentStep === 3 && "Your application is running successfully. You can monitor its status below."}
+                </p>
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-4 w-full">
+                {currentStep === 0 && (
+                  <Button
+                    onClick={() => autoFixMutation.mutate()}
+                    disabled={isAutoFixing}
+                    size="lg"
+                    className="h-12 px-8 text-base bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white shadow-lg shadow-purple-500/20 transition-all hover:scale-105"
+                  >
+                    {isAutoFixing ? (
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    ) : (
+                      <Wand2 className="h-5 w-5 mr-2" />
+                    )}
+                    Fix Automatically
+                  </Button>
+                )}
+
+                {currentStep === 1 && (
+                  <Button
+                    onClick={() => runQaMutation.mutate()}
+                    disabled={isRunningQa}
+                    size="lg"
+                    className="h-12 px-8 text-base bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white shadow-lg shadow-blue-500/20 transition-all hover:scale-105"
+                  >
+                    {isRunningQa ? (
+                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                    ) : (
+                      <PlayCircle className="h-5 w-5 mr-2" />
+                    )}
+                    Run QA Checks
+                  </Button>
+                )}
+
+                {currentStep === 2 && (
+                  <div className="flex flex-col items-center gap-4 w-full">
+                    <div className="flex items-center gap-3 bg-muted/50 p-2 rounded-lg border">
+                      <span className="text-sm font-medium text-muted-foreground pl-2">Deploy to:</span>
+                      <Select
+                        value={project.deploymentTarget || "auto"}
+                        onValueChange={(val) => updateProjectMutation.mutate({ deploymentTarget: val as any })}
+                        disabled={isDeploying}
+                      >
+                        <SelectTrigger className="w-[180px] h-9 bg-background border-0 shadow-sm">
+                          <SelectValue placeholder="Select provider" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="auto">Auto (Best Available)</SelectItem>
+                          <SelectItem value="vercel" disabled={!providerConfig?.vercel}>
+                            Vercel {!providerConfig?.vercel && "(Not Configured)"}
+                          </SelectItem>
+                          <SelectItem value="render" disabled={!providerConfig?.render}>
+                            Render {!providerConfig?.render && "(Not Configured)"}
+                          </SelectItem>
+                          <SelectItem value="railway" disabled={!providerConfig?.railway}>
+                            Railway {!providerConfig?.railway && "(Not Configured)"}
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Button
+                      onClick={() => deployMutation.mutate()}
+                      disabled={isDeploying}
+                      size="lg"
+                      className="h-12 px-8 text-base bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white shadow-lg shadow-green-500/20 transition-all hover:scale-105 w-full sm:w-auto min-w-[200px]"
+                    >
+                      {isDeploying ? (
+                        <Loader2 className="h-5 w-5 mr-2 animate-spin" />
+                      ) : (
+                        <Rocket className="h-5 w-5 mr-2" />
+                      )}
+                      Deploy Now
+                    </Button>
+                  </div>
+                )}
+                
+                {currentStep === 3 && (
+                   <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={() => deployMutation.mutate()}
+                    disabled={isDeploying}
+                    className="h-12 px-8 border-slate-200 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-900"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-2" />
+                    Redeploy
+                  </Button>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Status Notifications */}
+        <div className="space-y-4">
+          {project.lastDeployStatus === "recovery_triggered" && (
+            <div className="rounded-xl border border-blue-200 bg-blue-50/50 dark:bg-blue-950/20 dark:border-blue-900 p-4 flex items-start gap-4 shadow-sm">
+              <div className="h-10 w-10 rounded-full bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center shrink-0">
+                <Activity className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+              </div>
+              <div>
+                <h4 className="font-semibold text-blue-900 dark:text-blue-100">Self-healing Triggered</h4>
+                <p className="text-sm text-blue-700 dark:text-blue-300 mt-1">
+                  The system detected a failure and automatically redeployed your application to restore service.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {project.status === "qa_failed" && (
+            <div className="rounded-xl border border-red-200 bg-red-50/50 dark:bg-red-950/20 dark:border-red-900 p-4 flex items-start gap-4 shadow-sm">
+              <div className="h-10 w-10 rounded-full bg-red-100 dark:bg-red-900/50 flex items-center justify-center shrink-0">
+                <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div className="flex-1">
+                <h4 className="font-semibold text-red-900 dark:text-red-100">QA Checks Failed</h4>
+                <p className="text-sm text-red-700 dark:text-red-300 mt-1 mb-3">
+                  The project has critical issues that might prevent successful deployment.
+                </p>
+                <div className="text-sm bg-white/60 dark:bg-black/20 p-3 rounded-lg border border-red-100 dark:border-red-900/50 font-medium text-red-800 dark:text-red-200">
+                  {(() => {
+                    const report = project.qaReport || "";
+                    const keyErrorMatch = report.match(/\*\*Key Error:\*\*\s*(.+?)(\n|$)/);
+                    if (keyErrorMatch) return keyErrorMatch[1];
+                    const summaryMatch = report.match(/\*\*Verdict:\*\* FAIL[^\n]*\n\*\*Reason:\*\*\s*(.+?)(\n|$)/);
+                    if (summaryMatch) return summaryMatch[1];
+                    const summarySectionMatch = report.match(/## \d+\.\s*Summary & Verdict\s*\n(.+?)(\.|\n)/);
+                    if (summarySectionMatch) return summarySectionMatch[1] + ".";
+                    const criticalErrorMatch = report.match(/fails with a critical error[:\s]+(.+?)(\.|\n)/);
+                    if (criticalErrorMatch) return "Critical Error: " + criticalErrorMatch[1];
+                    return "Please review the full QA report below for details.";
+                  })()}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {autoReadyMessage && (
+            <div className="rounded-xl border border-green-200 bg-green-50/50 dark:bg-green-950/20 dark:border-green-900 p-4 flex items-start gap-4 shadow-sm relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4 opacity-10">
+                <Wand2 className="h-24 w-24 text-green-600" />
+              </div>
+              <div className="h-10 w-10 rounded-full bg-green-100 dark:bg-green-900/50 flex items-center justify-center shrink-0 z-10">
+                <CheckCircle className="h-5 w-5 text-green-600 dark:text-green-400" />
+              </div>
+              <div className="flex-1 z-10">
+                <h4 className="font-semibold text-green-900 dark:text-green-100">{autoReadyMessage}</h4>
+                <p className="text-sm text-green-700 dark:text-green-300 mt-1 mb-4">
+                  This project was automatically normalized, repaired and validated. Please run QA to verify before deployment.
+                </p>
+                <div className="flex flex-wrap gap-3">
+                  {project.status === "qa_passed" ? (
+                    <Button
+                      onClick={() => deployMutation.mutate()}
+                      disabled={isDeploying}
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white shadow-sm"
+                      data-testid="button-deploy-now-ready"
+                    >
+                      {isDeploying ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <Rocket className="h-4 w-4 mr-2" />
+                      )}
+                      Deploy Now
+                    </Button>
+                  ) : (
+                    <Button
+                      onClick={() => runQaMutation.mutate()}
+                      disabled={isRunningQa}
+                      size="sm"
+                      className="bg-green-600 hover:bg-green-700 text-white shadow-sm"
+                      data-testid="button-qa-now-ready"
+                    >
+                      {isRunningQa ? (
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      ) : (
+                        <PlayCircle className="h-4 w-4 mr-2" />
+                      )}
+                      Run QA Check
+                    </Button>
+                  )}
+                  {project.autoFixReport && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setExpandAutoFix(true)}
+                      className="bg-white/50 dark:bg-black/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200 hover:bg-green-100 dark:hover:bg-green-900/30"
+                      data-testid="button-view-autofix-ready"
+                    >
+                      View Auto-Fix Report
+                    </Button>
+                  )}
+                  {prs && prs.length > 0 && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
+                      className="bg-white/50 dark:bg-black/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200 hover:bg-green-100 dark:hover:bg-green-900/30"
+                      data-testid="button-view-pr-ready"
+                    >
+                      View Pull Request
+                    </Button>
+                  )}
+                </div>
+              </div>
+            </div>
           )}
         </div>
       </div>
 
-      {/* Stepper Component */}
-      <div className="mb-8 bg-card rounded-xl border shadow-sm p-4">
-        <DeploymentStepper currentStep={currentStep} steps={steps} />
-        
-        {/* Guided Action Area */}
-        <div className="mt-6 flex flex-col items-center justify-center border-t pt-6">
-          <h3 className="text-lg font-medium mb-4">
-            {currentStep === 0 && "Step 1: Analyze and Fix Issues"}
-            {currentStep === 1 && "Step 2: Verify Quality"}
-            {currentStep === 2 && "Step 3: Deploy to Production"}
-            {currentStep === 3 && "Project is Live!"}
-          </h3>
-          
-          <div className="flex gap-4">
-            {currentStep === 0 && (
-              <Button
-                onClick={() => autoFixMutation.mutate()}
-                disabled={isAutoFixing}
-                size="lg"
-                className="bg-purple-600 hover:bg-purple-700 text-white min-w-[200px]"
-              >
-                {isAutoFixing ? (
-                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                ) : (
-                  <Wand2 className="h-5 w-5 mr-2" />
-                )}
-                Fix Automatically
-              </Button>
-            )}
-
-            {currentStep === 1 && (
-              <Button
-                onClick={() => runQaMutation.mutate()}
-                disabled={isRunningQa}
-                size="lg"
-                className="min-w-[200px]"
-              >
-                {isRunningQa ? (
-                  <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                ) : (
-                  <PlayCircle className="h-5 w-5 mr-2" />
-                )}
-                Run QA Checks
-              </Button>
-            )}
-
-            {currentStep === 2 && (
-              <div className="flex flex-col gap-4 items-center">
-                <div className="flex items-center gap-2">
-                  <span className="text-sm font-medium text-muted-foreground">Deploy to:</span>
-                  <Select
-                    value={project.deploymentTarget || "auto"}
-                    onValueChange={(val) => updateProjectMutation.mutate({ deploymentTarget: val as any })}
-                    disabled={isDeploying}
-                  >
-                    <SelectTrigger className="w-[180px]">
-                      <SelectValue placeholder="Select provider" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="auto">Auto (Best Available)</SelectItem>
-                      <SelectItem value="vercel" disabled={!providerConfig?.vercel}>
-                        Vercel {!providerConfig?.vercel && "(Not Configured)"}
-                      </SelectItem>
-                      <SelectItem value="render" disabled={!providerConfig?.render}>
-                        Render {!providerConfig?.render && "(Not Configured)"}
-                      </SelectItem>
-                      <SelectItem value="railway" disabled={!providerConfig?.railway}>
-                        Railway {!providerConfig?.railway && "(Not Configured)"}
-                      </SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-
-                <Button
-                  onClick={() => deployMutation.mutate()}
-                  disabled={isDeploying}
-                  size="lg"
-                  className="bg-green-600 hover:bg-green-700 text-white min-w-[200px]"
-                >
-                  {isDeploying ? (
-                    <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                  ) : (
-                    <Rocket className="h-5 w-5 mr-2" />
-                  )}
-                  Deploy Now
-                </Button>
-              </div>
-            )}
-            
-            {currentStep === 3 && (
-               <Button
-                variant="outline"
-                onClick={() => deployMutation.mutate()}
-                disabled={isDeploying}
-              >
-                <RefreshCw className="h-4 w-4 mr-2" />
-                Redeploy
-              </Button>
-            )}
-          </div>
-          
-          <p className="text-sm text-muted-foreground mt-3 text-center max-w-md">
-            {currentStep === 0 && "We'll scan your code, fix common errors, generate missing config files, and detect environment variables."}
-            {currentStep === 1 && "We'll run a comprehensive quality assurance check to ensure your app is stable and bug-free."}
-            {currentStep === 2 && "We'll sync your environment variables and push your application to the cloud."}
-            {currentStep === 3 && "Your application is running. You can monitor its status below."}
-          </p>
-        </div>
-      </div>
-
-      {project.lastDeployStatus === "recovery_triggered" && (
-        <Alert className="mb-8 border-blue-500 bg-blue-50 dark:bg-blue-950">
-          <Activity className="h-4 w-4 text-blue-600" />
-          <AlertDescription className="ml-3 text-blue-900 dark:text-blue-100">
-            <strong>Self-healing triggered:</strong> The system detected a failure and automatically redeployed your application to restore service.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {project.status === "qa_failed" && (
-        <Alert className="mb-8 border-red-500 bg-red-50 dark:bg-red-950">
-          <AlertCircle className="h-4 w-4 text-red-600" />
-          <AlertDescription className="ml-3 text-red-900 dark:text-red-100">
-            <strong>QA Checks Failed:</strong> The project has critical issues that might prevent successful deployment.
-            <div className="mt-2 text-sm bg-white/50 dark:bg-black/20 p-2 rounded border border-red-200 dark:border-red-900">
-              {(() => {
-                // Try to extract key error from report
-                const report = project.qaReport || "";
-                
-                // 1. Explicit Key Error (Future proofing)
-                const keyErrorMatch = report.match(/\*\*Key Error:\*\*\s*(.+?)(\n|$)/);
-                if (keyErrorMatch) return keyErrorMatch[1];
-
-                // 2. Explicit Reason (Future proofing)
-                const summaryMatch = report.match(/\*\*Verdict:\*\* FAIL[^\n]*\n\*\*Reason:\*\*\s*(.+?)(\n|$)/);
-                if (summaryMatch) return summaryMatch[1];
-
-                // 3. Extract from Summary & Verdict section
-                // Look for the first sentence in the Summary section
-                const summarySectionMatch = report.match(/## \d+\.\s*Summary & Verdict\s*\n(.+?)(\.|\n)/);
-                if (summarySectionMatch) return summarySectionMatch[1] + ".";
-
-                // 4. Fallback: Look for "critical error" mentions
-                const criticalErrorMatch = report.match(/fails with a critical error[:\s]+(.+?)(\.|\n)/);
-                if (criticalErrorMatch) return "Critical Error: " + criticalErrorMatch[1];
-
-                return "Please review the full QA report below for details.";
-              })()}
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {autoReadyMessage && (
-        <Alert className="mb-8 border-green-600 bg-green-50 dark:bg-green-950">
-          <CheckCircle className="h-4 w-4 text-green-600" />
-          <AlertDescription className="ml-3">
-            <p className="font-semibold text-green-900 dark:text-green-100">{autoReadyMessage}</p>
-            <p className="text-sm text-green-800 dark:text-green-200 mt-1">
-              This project was automatically normalized, repaired and validated. Please run QA to verify before deployment.
-            </p>
-            <div className="flex gap-2 mt-3">
-              {project.status === "qa_passed" ? (
-                <Button
-                  onClick={() => deployMutation.mutate()}
-                  disabled={isDeploying}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                  data-testid="button-deploy-now-ready"
-                >
-                  {isDeploying ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Rocket className="h-4 w-4 mr-2" />
-                  )}
-                  Deploy Now
-                </Button>
-              ) : (
-                <Button
-                  onClick={() => runQaMutation.mutate()}
-                  disabled={isRunningQa}
-                  className="bg-green-600 hover:bg-green-700 text-white"
-                  data-testid="button-qa-now-ready"
-                >
-                  {isRunningQa ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <PlayCircle className="h-4 w-4 mr-2" />
-                  )}
-                  Run QA Check
-                </Button>
-              )}
-              {project.autoFixReport && (
-                <Button
-                  variant="outline"
-                  onClick={() => setExpandAutoFix(true)}
-                  data-testid="button-view-autofix-ready"
-                >
-                  View Auto-Fix Report
-                </Button>
-              )}
-              {prs && prs.length > 0 && (
-                <Button
-                  variant="outline"
-                  onClick={() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' })}
-                  data-testid="button-view-pr-ready"
-                >
-                  View Pull Request
-                </Button>
-              )}
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-      <div className="mb-8">
-        <Link href="/">
-          <Button variant="ghost" size="sm" className="mb-4" data-testid="button-back">
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back to Projects
-          </Button>
-        </Link>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-          <div className="flex items-center gap-4">
-            <div className="h-12 w-12 rounded-lg bg-primary/10 flex items-center justify-center">
-              <span className="text-2xl font-bold text-primary">
-                {project.name.charAt(0).toUpperCase()}
-              </span>
-            </div>
-            <div>
-              <h1 
-                className="text-2xl sm:text-3xl font-bold tracking-tight"
-                data-testid="text-project-title"
-              >
-                {project.name}
-              </h1>
-              <div className="flex items-center gap-3 mt-1">
-                <SourceIcon sourceType={project.sourceType} />
-                <StatusBadge status={project.status} />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            {canAutoFix && (
-              <Button
-                onClick={() => autoFixMutation.mutate()}
-                disabled={isAutoFixing}
-                className="bg-purple-600 hover:bg-purple-700 text-white"
-                data-testid="button-auto-fix"
-              >
-                {isAutoFixing ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Wand2 className="h-4 w-4 mr-2" />
-                )}
-                Auto-fix Project
-              </Button>
-            )}
-
-            {canRunQa && (
-              <Button
-                variant={canAutoFix ? "outline" : "default"}
-                onClick={() => runQaMutation.mutate()}
-                disabled={isRunningQa}
-                data-testid="button-run-qa"
-              >
-                {isRunningQa ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <PlayCircle className="h-4 w-4 mr-2" />
-                )}
-                Run QA
-              </Button>
-            )}
-
-            {canDeploy && (
-              <Button
-                variant={project.status === "qa_failed" ? "destructive" : (isDeployed ? "outline" : "default")}
-                onClick={() => deployMutation.mutate()}
-                disabled={isDeploying}
-                data-testid="button-deploy"
-              >
-                {isDeploying ? (
-                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : (
-                  <Rocket className="h-4 w-4 mr-2" />
-                )}
-                {project.status === "qa_failed" ? "Deploy Anyway" : (isDeployed ? "Redeploy Project" : "Deploy Project")}
-              </Button>
-            )}
-
-            {isDeployed && project.deployedUrl && (
-              <a href={project.deployedUrl} target="_blank" rel="noopener noreferrer">
-                <Button className="bg-blue-600 hover:bg-blue-700 text-white shadow-sm">
-                  <ExternalLink className="h-4 w-4 mr-2" />
-                  View Live App
-                </Button>
-              </a>
-            )}
-          </div>
-        </div>
-      </div>
 
       <div className="mb-8">
         <Card className="border-none shadow-md bg-gradient-to-br from-white to-slate-50 dark:from-slate-900 dark:to-slate-950">
@@ -790,174 +790,209 @@ export default function ProjectDetail() {
               )}
             </div>
           </CardHeader>
-          <CardContent className="space-y-6 pt-6">
-            <div className="py-2 overflow-x-auto">
+          <CardContent className="space-y-8 pt-6">
+            <div className="py-4 px-2">
               <StatusTimeline project={project} />
             </div>
             
-            <div className="grid gap-4">
-            {project.validationErrors && (
-              <div className="border rounded-lg overflow-hidden bg-white dark:bg-slate-900">
-                <button
-                  onClick={() => setExpandValidation(!expandValidation)}
-                  className="w-full flex items-center justify-between p-3 text-sm font-medium hover:bg-muted/50 transition-colors"
-                  data-testid="button-toggle-validation"
-                >
-                  <span className="flex items-center gap-2">
-                    <AlertCircle className="h-4 w-4 text-yellow-500" />
-                    Validation Issues
-                  </span>
-                  <ChevronDown 
-                    className={`h-4 w-4 transition-transform ${expandValidation ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                
-                {expandValidation && (
-                  <div className="p-3 pt-0 text-sm space-y-2 border-t bg-muted/20">
-                    <div className="text-muted-foreground mt-2">
-                      {(() => {
-                        let errors: string[] = [];
-                        try {
-                          const raw = project.validationErrors;
-                          if (Array.isArray(raw)) {
-                            errors = raw;
-                          } else if (typeof raw === "string") {
-                            errors = JSON.parse(raw);
-                          }
-                        } catch (e) {
-                          // ignore parsing errors
-                        }
-                        
-                        return Array.isArray(errors) ? errors.map((error: string, i: number) => (
-                          <div key={i} className="flex gap-2 items-start">
-                            <span className="text-red-500 mt-1">•</span>
-                            <span>{error}</span>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between px-1">
+                <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                  <Terminal className="h-4 w-4" />
+                  System Logs & Reports
+                </h3>
+                <span className="text-xs text-muted-foreground">Click to expand details</span>
+              </div>
+
+              <div className="grid gap-3">
+                {project.validationErrors && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandValidation(!expandValidation)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-validation"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-yellow-500/10 flex items-center justify-center">
+                          <AlertCircle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">Validation Issues</span>
+                          <span className="text-xs text-muted-foreground">Review detected validation warnings</span>
+                        </div>
+                      </div>
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandValidation ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandValidation && (
+                      <div className="p-4 pt-0 text-sm space-y-2 border-t bg-muted/20">
+                        <div className="text-muted-foreground mt-4">
+                          {(() => {
+                            let errors: string[] = [];
+                            try {
+                              const raw = project.validationErrors;
+                              if (Array.isArray(raw)) {
+                                errors = raw;
+                              } else if (typeof raw === "string") {
+                                errors = JSON.parse(raw);
+                              }
+                            } catch (e) {
+                              // ignore parsing errors
+                            }
+                            
+                            return Array.isArray(errors) ? errors.map((error: string, i: number) => (
+                              <div key={i} className="flex gap-2 items-start mb-2 last:mb-0">
+                                <span className="text-yellow-500 mt-1">•</span>
+                                <span>{error}</span>
+                              </div>
+                            )) : null;
+                          })()}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {project.normalizedReport && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandNormalization(!expandNormalization)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-normalization"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                          <FileText className="h-4 w-4 text-blue-600 dark:text-blue-500" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">Normalization Report</span>
+                          <span className="text-xs text-muted-foreground">Structure analysis and cleanup details</span>
+                        </div>
+                      </div>
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandNormalization ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandNormalization && (
+                      <div className="p-4 border-t bg-slate-50 dark:bg-slate-950">
+                        <div className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+                          {project.normalizedReport}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {project.autoFixReport && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandAutoFix(!expandAutoFix)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-auto-fix"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-purple-500/10 flex items-center justify-center">
+                          <Wand2 className="h-4 w-4 text-purple-600 dark:text-purple-500" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">Auto-fix Report</span>
+                          <span className="text-xs text-muted-foreground">AI-powered code repairs and adjustments</span>
+                        </div>
+                      </div>
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandAutoFix ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandAutoFix && (
+                      <div className="p-4 border-t bg-slate-50 dark:bg-slate-950">
+                        <div className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
+                          {project.autoFixReport}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {project.deployLogs && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandDeployLogs(!expandDeployLogs)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-deploy-logs"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-slate-500/10 flex items-center justify-center">
+                          <Terminal className="h-4 w-4 text-slate-600 dark:text-slate-400" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">Deployment Logs</span>
+                          <span className="text-xs text-muted-foreground">Live build and deployment output</span>
+                        </div>
+                      </div>
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandDeployLogs ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandDeployLogs && (
+                      <div className="border-t border-slate-800">
+                        <div className="bg-black text-green-400 p-4 font-mono text-xs whitespace-pre-wrap h-80 overflow-y-auto custom-scrollbar">
+                          <div className="flex items-center gap-2 text-slate-500 mb-2 pb-2 border-b border-slate-900">
+                            <div className="w-3 h-3 rounded-full bg-red-500/20"></div>
+                            <div className="w-3 h-3 rounded-full bg-yellow-500/20"></div>
+                            <div className="w-3 h-3 rounded-full bg-green-500/20"></div>
+                            <span className="ml-2">terminal — node</span>
                           </div>
-                        )) : null;
-                      })()}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {project.normalizedReport && (
-              <div className="border rounded-lg overflow-hidden bg-white dark:bg-slate-900">
-                <button
-                  onClick={() => setExpandNormalization(!expandNormalization)}
-                  className="w-full flex items-center justify-between p-3 text-sm font-medium hover:bg-muted/50 transition-colors"
-                  data-testid="button-toggle-normalization"
-                >
-                  <span className="flex items-center gap-2">
-                    <FileText className="h-4 w-4 text-blue-500" />
-                    Normalization Report
-                  </span>
-                  <ChevronDown 
-                    className={`h-4 w-4 transition-transform ${expandNormalization ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                
-                {expandNormalization && (
-                  <div className="p-3 border-t bg-slate-50 dark:bg-slate-950">
-                    <div className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-                      {project.normalizedReport}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {project.autoFixReport && (
-              <div className="border rounded-lg overflow-hidden bg-white dark:bg-slate-900">
-                <button
-                  onClick={() => setExpandAutoFix(!expandAutoFix)}
-                  className="w-full flex items-center justify-between p-3 text-sm font-medium hover:bg-muted/50 transition-colors"
-                  data-testid="button-toggle-auto-fix"
-                >
-                  <span className="flex items-center gap-2">
-                    <Wand2 className="h-4 w-4 text-purple-500" />
-                    Auto-fix Report
-                  </span>
-                  <ChevronDown 
-                    className={`h-4 w-4 transition-transform ${expandAutoFix ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                
-                {expandAutoFix && (
-                  <div className="p-3 border-t bg-slate-50 dark:bg-slate-950">
-                    <div className="font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-                      {project.autoFixReport}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {project.deployLogs && (
-              <div className="border rounded-lg overflow-hidden bg-slate-950 shadow-inner">
-                <button
-                  onClick={() => setExpandDeployLogs(!expandDeployLogs)}
-                  className="w-full flex items-center justify-between p-3 text-sm font-medium text-slate-300 hover:bg-slate-900 transition-colors"
-                  data-testid="button-toggle-deploy-logs"
-                >
-                  <span className="flex items-center gap-2">
-                    <Terminal className="h-4 w-4" />
-                    Deployment Logs
-                  </span>
-                  <ChevronDown 
-                    className={`h-4 w-4 transition-transform ${expandDeployLogs ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                
-                {expandDeployLogs && (
-                  <div className="border-t border-slate-800">
-                    <div className="bg-black text-green-400 p-4 font-mono text-xs whitespace-pre-wrap h-80 overflow-y-auto custom-scrollbar">
-                      <div className="flex items-center gap-2 text-slate-500 mb-2 pb-2 border-b border-slate-900">
-                        <div className="w-3 h-3 rounded-full bg-red-500/20"></div>
-                        <div className="w-3 h-3 rounded-full bg-yellow-500/20"></div>
-                        <div className="w-3 h-3 rounded-full bg-green-500/20"></div>
-                        <span className="ml-2">terminal — node</span>
+                          {project.deployLogs}
+                          <span className="animate-pulse">_</span>
+                        </div>
                       </div>
-                      {project.deployLogs}
-                      <span className="animate-pulse">_</span>
-                    </div>
+                    )}
                   </div>
                 )}
-              </div>
-            )}
 
-            {files && files.files.length > 0 && (
-              <div className="border rounded-lg overflow-hidden bg-white dark:bg-slate-900">
-                <button
-                  onClick={() => setExpandFiles(!expandFiles)}
-                  className="w-full flex items-center justify-between p-3 text-sm font-medium hover:bg-muted/50 transition-colors"
-                  data-testid="button-toggle-files"
-                >
-                  <span className="flex items-center gap-2">
-                    <Folder className="h-4 w-4 text-blue-500" />
-                    Project Files (Source Code)
-                  </span>
-                  <ChevronDown 
-                    className={`h-4 w-4 transition-transform ${expandFiles ? 'rotate-180' : ''}`}
-                  />
-                </button>
-                
-                {expandFiles && (
-                  <div className="p-0 border-t max-h-80 overflow-y-auto">
-                    {files.files.map((file, i) => (
-                      <div key={i} className="flex items-center gap-2 py-2 px-4 hover:bg-muted/50 border-b last:border-0 text-sm">
-                        {file.type === "directory" ? (
-                          <Folder className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                        ) : (
-                          <File className="h-4 w-4 text-slate-500 flex-shrink-0" />
-                        )}
-                        <span className="font-mono text-xs text-muted-foreground">{file.path}</span>
+                {files && files.files.length > 0 && (
+                  <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
+                    <button
+                      onClick={() => setExpandFiles(!expandFiles)}
+                      className="w-full flex items-center justify-between p-4 text-sm font-medium"
+                      data-testid="button-toggle-files"
+                    >
+                      <div className="flex items-center gap-3">
+                        <div className="h-8 w-8 rounded-lg bg-blue-500/10 flex items-center justify-center">
+                          <Folder className="h-4 w-4 text-blue-600 dark:text-blue-500" />
+                        </div>
+                        <div className="flex flex-col items-start">
+                          <span className="text-foreground font-semibold">Project Files</span>
+                          <span className="text-xs text-muted-foreground">Browse source code structure</span>
+                        </div>
                       </div>
-                    ))}
+                      <ChevronDown 
+                        className={`h-4 w-4 text-muted-foreground transition-transform duration-200 ${expandFiles ? 'rotate-180' : ''}`}
+                      />
+                    </button>
+                    
+                    {expandFiles && (
+                      <div className="p-0 border-t max-h-80 overflow-y-auto">
+                        {files.files.map((file, i) => (
+                          <div key={i} className="flex items-center gap-2 py-2 px-4 hover:bg-muted/50 border-b last:border-0 text-sm">
+                            {file.type === "directory" ? (
+                              <Folder className="h-4 w-4 text-blue-500 flex-shrink-0" />
+                            ) : (
+                              <File className="h-4 w-4 text-slate-500 flex-shrink-0" />
+                            )}
+                            <span className="font-mono text-xs text-muted-foreground">{file.path}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
-            )}
             </div>
           </CardContent>
         </Card>

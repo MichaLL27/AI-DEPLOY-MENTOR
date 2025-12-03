@@ -13,7 +13,7 @@ export interface VercelDeployResult {
   status?: string;
 }
 
-async function getGithubRepoId(owner: string, repo: string): Promise<string | number | null> {
+async function getGithubRepoInfo(owner: string, repo: string): Promise<{ id: number, defaultBranch: string } | null> {
   try {
     const headers: Record<string, string> = {
       "User-Agent": "AI-Deploy-Mentor",
@@ -26,14 +26,14 @@ async function getGithubRepoId(owner: string, repo: string): Promise<string | nu
 
     const res = await fetch(`https://api.github.com/repos/${owner}/${repo}`, { headers });
     if (!res.ok) {
-      console.error(`[GitHub] Failed to fetch repo ID: ${res.status} ${res.statusText}`);
+      console.error(`[GitHub] Failed to fetch repo info: ${res.status} ${res.statusText}`);
       return null;
     }
     
     const data = await res.json();
-    return data.id;
+    return { id: data.id, defaultBranch: data.default_branch };
   } catch (e) {
-    console.error("[GitHub] Error fetching repo ID:", e);
+    console.error("[GitHub] Error fetching repo info:", e);
     return null;
   }
 }
@@ -356,7 +356,14 @@ export async function deployToVercel(project: Project): Promise<VercelDeployResu
     target: ["production", "preview", "development"]
   }));
 
-  // Handle ZIP Deployment
+  // ALWAYS prefer ZIP deployment if we have local files.
+  // This ensures we deploy the "Fixed" version and avoids GitHub permission issues.
+  if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
+     console.log(`[Vercel] Deploying from local files (normalized) to ensure fixes are applied...`);
+     return deployZipToVercel(project, token, vercelEnv);
+  }
+
+  // Handle ZIP Deployment (Fallback)
   if (project.sourceType === "zip") {
     return deployZipToVercel(project, token, vercelEnv);
   }
@@ -377,14 +384,15 @@ export async function deployToVercel(project: Project): Promise<VercelDeployResu
 
     console.log(`[Vercel] Deploying ${fullRepo} to Vercel...`);
 
-    // Fetch Repo ID (Required for Vercel API v13)
-    const repoId = await getGithubRepoId(owner, repoName);
-    if (!repoId) {
+    // Fetch Repo Info (Required for Vercel API v13)
+    const repoInfo = await getGithubRepoInfo(owner, repoName);
+    if (!repoInfo) {
       return { 
         success: false, 
-        error: "Could not fetch GitHub Repository ID. Ensure the repository exists and is public, or configure GITHUB_TOKEN." 
+        error: "Could not fetch GitHub Repository info. Ensure the repository exists and is public, or configure GITHUB_TOKEN." 
       };
     }
+    const { id: repoId, defaultBranch } = repoInfo;
 
     // Sanitize Project Name
     const sanitizedName = project.name.toLowerCase().replace(/[^a-z0-9._-]/g, '-').replace(/--+/g, '-').slice(0, 100);
@@ -404,7 +412,7 @@ export async function deployToVercel(project: Project): Promise<VercelDeployResu
       gitSource: {
         type: "github",
         repo: fullRepo,
-        ref: "main", // Default to main
+        ref: defaultBranch || "main", // Use detected default branch
         repoId: repoId // Added repoId
       },
       projectSettings: {

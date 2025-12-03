@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Plus, Trash2, Eye, EyeOff, Wand2, Save, Key, Edit2, X } from "lucide-react";
+import { Loader2, Plus, Trash2, Eye, EyeOff, Wand2, Save, Key, Edit2, X, Lock, Unlock } from "lucide-react";
 import { ToastAction } from "@/components/ui/toast";
 
 interface EnvVar {
@@ -128,11 +128,13 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
   const envList = Object.values(envVars);
 
   return (
-    <Card className="border-none shadow-md bg-white dark:bg-slate-900">
-      <CardHeader className="flex flex-row items-center justify-between border-b pb-4">
+    <Card className="border-none shadow-md bg-gradient-to-br from-card to-muted/30 overflow-hidden">
+      <CardHeader className="flex flex-row items-center justify-between border-b bg-muted/20 pb-4">
         <div className="space-y-1">
           <CardTitle className="text-lg font-semibold flex items-center gap-2">
-            <Key className="h-5 w-5 text-primary" />
+            <div className="p-2 rounded-lg bg-primary/10 text-primary">
+              <Key className="h-5 w-5" />
+            </div>
             Environment Variables
           </CardTitle>
           <CardDescription>
@@ -143,71 +145,86 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
           variant="outline"
           onClick={() => autoFixMutation.mutate()}
           disabled={autoFixMutation.isPending}
-          className="border-purple-200 hover:bg-purple-50 text-purple-700 dark:border-purple-800 dark:text-purple-300"
+          className="border-purple-200 hover:bg-purple-50 text-purple-700 dark:border-purple-800 dark:text-purple-300 shadow-sm"
         >
           {autoFixMutation.isPending ? (
             <Loader2 className="h-4 w-4 mr-2 animate-spin" />
           ) : (
             <Wand2 className="h-4 w-4 mr-2" />
           )}
-          Fix automatically with AI
+          Auto-Detect
         </Button>
       </CardHeader>
       <CardContent className="pt-6">
         {isLoading ? (
-          <div className="flex justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+          <div className="flex justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary/50" />
           </div>
         ) : (
           <div className="space-y-6">
             {/* Add/Edit Variable Form */}
-            <div id="env-form" className={`flex gap-3 items-end p-4 rounded-lg border transition-colors ${editingKey ? 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800' : 'bg-slate-50 dark:bg-slate-950'}`}>
-              <div className="flex-1 space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">
+            <div 
+              id="env-form" 
+              className={`flex flex-col md:flex-row gap-4 items-end p-5 rounded-xl border transition-all duration-300 shadow-sm ${
+                editingKey ? "bg-blue-50/50 border-blue-200 dark:bg-blue-900/10 dark:border-blue-800" : "bg-muted/30 border-transparent hover:border-muted"
+              }`}
+            >
+              <div className="flex-1 space-y-2 w-full">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                   {editingKey ? "Editing Key" : "New Key"}
                 </label>
-                <Input
-                  placeholder="e.g. API_KEY"
-                  value={newKey}
-                  onChange={(e) => setNewKey(e.target.value.toUpperCase())}
-                  className="font-mono"
-                  disabled={!!editingKey} // Disable key editing when updating
-                />
+                <div className="relative">
+                  <Input
+                    placeholder="e.g. DATABASE_URL"
+                    value={newKey}
+                    onChange={(e) => setNewKey(e.target.value.toUpperCase())}
+                    className="font-mono bg-background/50"
+                    disabled={!!editingKey} 
+                  />
+                </div>
               </div>
-              <div className="flex-[2] space-y-2">
-                <label className="text-xs font-medium text-muted-foreground">Value</label>
-                <Input
-                  placeholder="Value..."
-                  type={newIsSecret ? "password" : "text"}
-                  value={newValue}
-                  onChange={(e) => setNewValue(e.target.value)}
-                  className="font-mono"
-                />
+              <div className="flex-[2] space-y-2 w-full">
+                <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Value</label>
+                <div className="relative">
+                  <Input
+                    placeholder="Value..."
+                    type={newIsSecret ? "password" : "text"}
+                    value={newValue}
+                    onChange={(e) => setNewValue(e.target.value)}
+                    className="font-mono bg-background/50 pr-10"
+                  />
+                  <button
+                    onClick={() => setNewIsSecret(!newIsSecret)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    title={newIsSecret ? "Mark as Public" : "Mark as Secret"}
+                  >
+                    {newIsSecret ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center h-10 pb-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setNewIsSecret(!newIsSecret)}
-                  className={newIsSecret ? "text-orange-500" : "text-slate-400"}
-                  title="Toggle Secret"
+              
+              <div className="flex gap-2 w-full md:w-auto">
+                <Button 
+                  onClick={handleSave} 
+                  disabled={!newKey || updateMutation.isPending}
+                  className="flex-1 md:flex-none"
                 >
-                  {newIsSecret ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                </Button>
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={handleSave} disabled={!newKey || updateMutation.isPending}>
                   {updateMutation.isPending ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : editingKey ? (
-                    <Save className="h-4 w-4 mr-2" />
+                    <>
+                      <Save className="h-4 w-4 mr-2" />
+                      Update
+                    </>
                   ) : (
-                    <Plus className="h-4 w-4 mr-2" />
+                    <>
+                      <Plus className="h-4 w-4 mr-2" />
+                      Add
+                    </>
                   )}
-                  {editingKey ? "Update" : "Add"}
                 </Button>
                 {editingKey && (
-                  <Button variant="ghost" onClick={handleCancelEdit} size="icon">
+                  <Button variant="ghost" onClick={handleCancelEdit} size="icon" className="shrink-0">
                     <X className="h-4 w-4" />
                   </Button>
                 )}
@@ -215,79 +232,91 @@ export function EnvVarsPanel({ projectId, onDeploy, isDeploying }: EnvVarsPanelP
             </div>
 
             {/* Variables Table */}
-            <div className="border rounded-lg overflow-hidden">
+            <div className="border rounded-xl overflow-hidden shadow-sm bg-card">
               <Table>
                 <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[30%]">Key</TableHead>
-                    <TableHead className="w-[50%]">Value</TableHead>
-                    <TableHead className="w-[10%]">Type</TableHead>
-                    <TableHead className="w-[10%] text-right">Actions</TableHead>
+                  <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    <TableHead className="w-[30%] font-semibold">Key</TableHead>
+                    <TableHead className="w-[45%] font-semibold">Value</TableHead>
+                    <TableHead className="w-[10%] font-semibold">Type</TableHead>
+                    <TableHead className="w-[15%] text-right font-semibold">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {envList.length === 0 ? (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
-                        No environment variables configured.
+                      <TableCell colSpan={4} className="text-center py-12 text-muted-foreground">
+                        <div className="flex flex-col items-center gap-2">
+                          <div className="p-3 rounded-full bg-muted">
+                            <Key className="h-6 w-6 text-muted-foreground/50" />
+                          </div>
+                          <p>No environment variables configured.</p>
+                          <Button 
+                            variant="link" 
+                            onClick={() => autoFixMutation.mutate()}
+                            className="text-primary"
+                          >
+                            Auto-detect from code
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ) : (
                     envList.map((env) => (
-                      <TableRow key={env.key} className={editingKey === env.key ? "bg-blue-50/50 dark:bg-blue-900/10" : ""}>
-                        <TableCell className="font-mono font-medium">{env.key}</TableCell>
+                      <TableRow key={env.key} className="group transition-colors">
+                        <TableCell className="font-mono font-medium text-sm">{env.key}</TableCell>
                         <TableCell className="font-mono text-sm">
                           <div className="flex items-center gap-2">
-                            <span className="truncate max-w-[300px]">
+                            <span className="truncate max-w-[250px] block">
                               {env.isSecret && !showSecrets[env.key]
-                                ? "••••••••••••••••"
+                                ? ""
                                 : env.value}
                             </span>
                             {env.isSecret && (
                               <button
                                 onClick={() => toggleSecret(env.key)}
-                                className="text-muted-foreground hover:text-foreground"
+                                className="text-muted-foreground hover:text-primary transition-colors opacity-0 group-hover:opacity-100"
                               >
                                 {showSecrets[env.key] ? (
-                                  <EyeOff className="h-3 w-3" />
+                                  <EyeOff className="h-3.5 w-3.5" />
                                 ) : (
-                                  <Eye className="h-3 w-3" />
+                                  <Eye className="h-3.5 w-3.5" />
                                 )}
                               </button>
                             )}
                           </div>
                         </TableCell>
                         <TableCell>
-                          <div className="flex gap-1">
+                          <div className="flex gap-1 flex-wrap">
                             {env.isSecret && (
-                              <Badge variant="outline" className="text-orange-500 border-orange-200 bg-orange-50">
+                              <Badge variant="outline" className="text-orange-600 border-orange-200 bg-orange-50 dark:bg-orange-900/20 dark:border-orange-800 dark:text-orange-300 text-[10px] px-1.5 py-0 h-5">
                                 Secret
                               </Badge>
                             )}
                             {env.isAutoGenerated && (
-                              <Badge variant="outline" className="text-purple-500 border-purple-200 bg-purple-50">
+                              <Badge variant="outline" className="text-purple-600 border-purple-200 bg-purple-50 dark:bg-purple-900/20 dark:border-purple-800 dark:text-purple-300 text-[10px] px-1.5 py-0 h-5">
                                 AI
                               </Badge>
                             )}
                           </div>
                         </TableCell>
                         <TableCell className="text-right">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Button
                               variant="ghost"
-                              size="sm"
+                              size="icon"
                               onClick={() => handleEdit(env)}
-                              className="text-blue-500 hover:text-blue-700 hover:bg-blue-50"
+                              className="h-8 w-8 text-blue-500 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-900/20"
                             >
-                              <Edit2 className="h-4 w-4" />
+                              <Edit2 className="h-3.5 w-3.5" />
                             </Button>
                             <Button
                               variant="ghost"
-                              size="sm"
+                              size="icon"
                               onClick={() => handleDelete(env.key)}
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              className="h-8 w-8 text-red-500 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                             >
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </Button>
                           </div>
                         </TableCell>
