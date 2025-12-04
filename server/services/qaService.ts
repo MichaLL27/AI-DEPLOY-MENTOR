@@ -124,8 +124,9 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
         const hasNodeModules = fs.existsSync(path.join(project.normalizedFolderPath, "node_modules"));
         if (!hasNodeModules && fs.existsSync(path.join(project.normalizedFolderPath, "package.json"))) {
           await logQa(project.id, "Installing dependencies for test execution...");
-          // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-          await execAsync("npm install --legacy-peer-deps", { cwd: project.normalizedFolderPath, timeout: 300000 }); // Increased to 5 mins
+          // Use --legacy-peer-deps to avoid ERESOLVE errors
+          // Added --no-audit --no-fund --loglevel=error for speed on Render
+          await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error", { cwd: project.normalizedFolderPath, timeout: 300000 }); 
           await logQa(project.id, "Dependencies installed.");
         }
       } catch (e) {

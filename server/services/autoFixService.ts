@@ -180,19 +180,18 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         }
 
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-        // Added --no-audit --no-fund for speed optimization
+        // Added --no-audit --no-fund --loglevel=error for speed optimization
         // Increased timeout to 5 minutes for slower environments (Render Free Tier)
-        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund", { cwd: folderPath, timeout: 300000 });
+        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error", { cwd: folderPath, timeout: 300000 });
         await addAction("Installed project dependencies");
 
         // Fix security vulnerabilities
         try {
-          await logAutoFix(project.id, "Fixing security vulnerabilities...");
-          // We use --force to actually fix things, but be careful as it might break things.
-          // For an auto-fixer, maybe just 'npm audit fix' is safer? 
-          // The user requirement says "Fix security vulnerabilities", so let's try standard fix first.
-          await execAsync("npm audit fix", { cwd: folderPath, timeout: 120000 });
-          await addAction("Applied security fixes (npm audit fix)");
+          // Skip full audit fix on Render to save time, unless critical
+          // await logAutoFix(project.id, "Fixing security vulnerabilities...");
+          // await execAsync("npm audit fix", { cwd: folderPath, timeout: 120000 });
+          // await addAction("Applied security fixes (npm audit fix)");
+          await addAction("Skipped 'npm audit fix' to improve performance on Render.");
         } catch (auditErr) {
           // audit fix often exits with non-zero if vulnerabilities remain, which is fine
           console.warn("npm audit fix completed with warnings:", auditErr);

@@ -293,23 +293,33 @@ export async function registerRoutes(
       // Update status to qa_running
       await storage.updateProject(id, { status: "qa_running" });
 
-      // Run QA checks
-      const qaResult = await runQaOnProject(project);
-
-      // Update project with results
-      const updatedProject = await storage.updateProject(id, {
-        status: qaResult.passed ? "qa_passed" : "qa_failed",
-        qaReport: qaResult.report,
+      // Run QA checks in BACKGROUND to avoid Render timeouts
+      runQaOnProject(project).then(async (qaResult) => {
+        await storage.updateProject(id, {
+          status: qaResult.passed ? "qa_passed" : "qa_failed",
+          qaReport: qaResult.report,
+          // qaLastRun: new Date(), // Removed as it's not in schema
+        });
+      }).catch(async (err) => {
+        console.error("Background QA failed:", err);
+        await storage.updateProject(id, { 
+          status: "qa_failed", 
+          qaReport: `Internal Server Error during QA execution: ${err.message}` 
+        });
       });
 
-      res.json(updatedProject);
+      // Return immediately
+      res.json({ 
+        status: "qa_running", 
+        message: "QA started in background. Please poll for updates." 
+      });
     } catch (error) {
       console.error("Error running QA:", error);
       // Try to update status to failed
       try {
         await storage.updateProject(req.params.id, { status: "qa_failed" });
       } catch {}
-      res.status(500).json({ error: "Failed to run QA checks" });
+      res.status(500).json({ error: "Failed to start QA process" });
     }
   });
 
@@ -1290,7 +1300,8 @@ If the user asks to perform one of these actions, CALL THE CORRESPONDING TOOL/FU
               }
               
               const flag = dev ? "--save-dev" : "";
-              const command = `npm install ${packageName} ${flag}`;
+              // Added --no-audit --no-fund for speed on Render
+              const command = `npm install ${packageName} ${flag} --no-audit --no-fund`;
               
               toolResult = `Installing ${packageName}... This might take a moment.`;
               
@@ -1390,7 +1401,8 @@ volumes:
               
               // Run npm audit fix
               // We use --force if the user explicitly asked for it, but let's stick to safe fixes first
-              await execAsync("npm audit fix", { cwd: project.normalizedFolderPath });
+              // Added --no-audit --no-fund for speed on Render
+              await execAsync("npm audit fix --no-audit --no-fund", { cwd: project.normalizedFolderPath });
               
               toolResult = "Successfully ran 'npm audit fix'. Security vulnerabilities have been patched where possible.";
            } catch (err) {
