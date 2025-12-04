@@ -19,7 +19,8 @@ export async function normalizeProjectStructure(
 ): Promise<NormalizationResult> {
   const actions: string[] = [];
   const isVercel = process.env.VERCEL === "1";
-  let normalizedRoot = isVercel
+  const isRender = process.env.RENDER === "true";
+  let normalizedRoot = (isVercel || isRender)
     ? path.join(os.tmpdir(), "normalized", project.id)
     : path.join(process.cwd(), "normalized", project.id);
 
@@ -50,7 +51,7 @@ export async function normalizeProjectStructure(
         // This avoids the lock entirely
         console.warn(`[Normalizer] Could not clean ${normalizedRoot}, switching to unique path.`);
         const timestamp = Date.now();
-        normalizedRoot = isVercel
+        normalizedRoot = (isVercel || isRender)
           ? path.join(os.tmpdir(), "normalized", `${project.id}_${timestamp}`)
           : path.join(process.cwd(), "normalized", `${project.id}_${timestamp}`);
           
@@ -353,6 +354,7 @@ function isProjectReadyForDeploy(projectType: string, normalizedRoot: string): b
       return fs.existsSync(path.join(normalizedRoot, "package.json"));
     case "nextjs":
     case "react_spa":
+    case "angular":
       return fs.existsSync(path.join(normalizedRoot, "package.json"));
     case "python_flask":
       return fs.existsSync(path.join(normalizedRoot, "requirements.txt"));

@@ -8,7 +8,8 @@ import type { Project } from "@shared/schema";
 
 async function downloadZip(url: string, projectId: string): Promise<string> {
   const isVercel = process.env.VERCEL === "1";
-  const baseDir = isVercel ? os.tmpdir() : process.cwd();
+  const isRender = process.env.RENDER === "true";
+  const baseDir = (isVercel || isRender) ? os.tmpdir() : process.cwd();
   const zipPath = path.join(baseDir, "uploads", "projects", projectId, "source.zip");
 
   // Ensure directory exists

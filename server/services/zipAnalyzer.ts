@@ -34,7 +34,8 @@ export async function analyzeZipProject(project: Project): Promise<{
 
   // Create temp extraction directory
   const isVercel = process.env.VERCEL === "1";
-  const extractDir = isVercel
+  const isRender = process.env.RENDER === "true";
+  const extractDir = (isVercel || isRender)
     ? path.join(os.tmpdir(), "zip-analysis", project.id)
     : path.join(process.cwd(), "tmp", "zip-analysis", project.id);
     

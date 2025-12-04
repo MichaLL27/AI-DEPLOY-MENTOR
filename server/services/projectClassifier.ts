@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 
-export type ProjectType = "static_web" | "node_backend" | "nextjs" | "react_spa" | "python_flask" | "unknown";
+export type ProjectType = "static_web" | "node_backend" | "nextjs" | "react_spa" | "angular" | "python_flask" | "unknown";
 export type ProjectValidity = "valid" | "warning" | "invalid";
 
 export interface ClassificationResult {
@@ -107,6 +107,7 @@ function analyzePackageJsonProject(pkgPath: string, relativeFiles: string[]): { 
   const deps = { ...pkg.dependencies, ...pkg.devDependencies };
   const hasReact = "react" in deps;
   const hasNext = "next" in deps;
+  const hasAngular = "@angular/core" in deps;
   const hasExpress = "express" in deps;
   const hasVite = "vite" in deps;
   const hasFastify = "fastify" in deps;
@@ -128,6 +129,11 @@ function analyzePackageJsonProject(pkgPath: string, relativeFiles: string[]): { 
       errors.push("Next.js project detected but missing next.config.js and pages/app directory");
     }
     return { type: "nextjs", score: 10, errors };
+  }
+
+  // Angular
+  if (hasAngular) {
+    return { type: "angular", score: 9, errors: [] };
   }
 
   // React SPA (Vite or CRA)

@@ -125,6 +125,9 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       case "react_spa":
         await fixReactProject(folderPath, projectType, addAction);
         break;
+      case "angular":
+        await fixAngularProject(folderPath, addAction);
+        break;
       default:
         await addAction("No specific framework auto-fixes, falling back to generic Node.js repairs.");
     }
@@ -569,6 +572,61 @@ async function fixBrowserEnvironment(
 }
 
 /**
+ * Fix Angular projects
+ */
+async function fixAngularProject(
+  folderPath: string,
+  addAction: (msg: string) => Promise<void>
+): Promise<void> {
+  const packageJsonPath = path.join(folderPath, "package.json");
+  if (!fs.existsSync(packageJsonPath)) return;
+
+  try {
+    const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+    let updated = false;
+
+    // Ensure scripts exist
+    if (!pkg.scripts) pkg.scripts = {};
+
+    // Fix build script: Avoid --prod for newer Angular versions
+    if (!pkg.scripts.build) {
+      pkg.scripts.build = "ng build --configuration production";
+      updated = true;
+    } else if (pkg.scripts.build.includes("--prod")) {
+      // Check angular version if possible, but safer to switch to --configuration production
+      // or just "ng build" which defaults to production in v12+
+      pkg.scripts.build = pkg.scripts.build.replace("--prod", "--configuration production");
+      updated = true;
+      await addAction("Updated deprecated '--prod' flag to '--configuration production'");
+    }
+
+    if (!pkg.scripts.start) {
+      pkg.scripts.start = "ng serve";
+      updated = true;
+    }
+
+    // Fix test script for CI (Headless)
+    if (pkg.scripts.test && !pkg.scripts.test.includes("ChromeHeadless")) {
+       // We don't want to break local dev, so maybe add test:ci?
+       // But for deployment, we usually run 'npm test'.
+       // Let's add a specific test:ci script and try to use that if available?
+       // Or just update test to use --watch=false --browsers=ChromeHeadless
+       if (!pkg.scripts["test:ci"]) {
+         pkg.scripts["test:ci"] = "ng test --no-watch --no-progress --browsers=ChromeHeadless";
+         updated = true;
+       }
+    }
+
+    if (updated) {
+      fs.writeFileSync(packageJsonPath, JSON.stringify(pkg, null, 2));
+      await addAction("Updated Angular scripts");
+    }
+  } catch (e) {
+    await addAction("Failed to update Angular scripts");
+  }
+}
+
+/**
  * Fix static web projects
  */
 async function fixStaticWeb(folderPath: string, addAction: (msg: string) => Promise<void>): Promise<void> {
@@ -840,6 +898,24 @@ RUN npm run build
 
 FROM nginx:alpine
 COPY --from=build /app/dist /usr/share/nginx/html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]`;
+      break;
+
+    case "angular":
+      content = `FROM node:18-alpine as build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+
+FROM nginx:alpine
+# Angular output path varies (dist/project-name or just dist)
+# We try to copy from dist/*
+COPY --from=build /app/dist/*/ /usr/share/nginx/html/
+# Fallback if it's just dist/
+COPY --from=build /app/dist/ /usr/share/nginx/html/
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]`;
       break;
@@ -1203,6 +1279,7 @@ function checkReadyForDeploy(projectType: string, folderPath: string): boolean {
       );
     case "nextjs":
     case "react_spa":
+    case "angular":
       return fs.existsSync(path.join(folderPath, "package.json"));
     default:
       return false;
@@ -1300,6 +1377,7 @@ Return the IMPROVED content of the file.
 - Do NOT remove essential logic.
 - Do NOT add comments unless necessary.
 - Ensure 'start' and 'build' scripts in package.json are correct.
+- For Angular projects, DO NOT use '--prod'. Use '--configuration production' instead.
 - Ensure server listens on process.env.PORT.
 - Fix any broken imports or require statements.
 - Fix any obvious routing issues (e.g. missing app.use, invalid paths).

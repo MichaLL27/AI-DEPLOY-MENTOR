@@ -39,14 +39,15 @@ import { syncEnvVarsToRailway } from "./services/railwayService";
 import { generateFunctionalTests } from "./services/testGeneratorService";
 
 // Configure multer for ZIP uploads
-// On Vercel, we must use /tmp. On local, we can use uploads/
+// On Vercel and Render, we must use /tmp. On local, we can use uploads/
 const isVercel = process.env.VERCEL === "1";
-const uploadDir = isVercel 
+const isRender = process.env.RENDER === "true";
+const uploadDir = (isVercel || isRender)
   ? path.join(os.tmpdir(), "uploads") 
   : path.join(process.cwd(), "uploads");
 
-// Use memory storage on Vercel to avoid permission issues with default disk storage
-const storageConfig = isVercel ? multer.memoryStorage() : multer.diskStorage({
+// Use memory storage on Vercel/Render to avoid permission issues with default disk storage
+const storageConfig = (isVercel || isRender) ? multer.memoryStorage() : multer.diskStorage({
   destination: (_req, _file, cb) => {
     cb(null, uploadDir);
   },
@@ -73,7 +74,7 @@ export async function registerRoutes(
   app: Express
 ): Promise<Server> {
   // Ensure upload directory exists (only needed for local disk storage)
-  if (!isVercel) {
+  if (!isVercel && !isRender) {
     try {
       fs.mkdirSync(uploadDir, { recursive: true });
     } catch (err) {
@@ -376,7 +377,7 @@ export async function registerRoutes(
           const isVercel = process.env.VERCEL === "1";
           
           // 1. Delete Uploads
-          const uploadPath = isVercel 
+          const uploadPath = (isVercel || isRender)
             ? path.join(os.tmpdir(), "uploads", "projects", id)
             : path.join(process.cwd(), "uploads", "projects", id);
             
@@ -385,7 +386,7 @@ export async function registerRoutes(
           }
 
           // 2. Delete Normalized Code
-          const normalizedPath = isVercel
+          const normalizedPath = (isVercel || isRender)
             ? path.join(os.tmpdir(), "normalized", id)
             : path.join(process.cwd(), "normalized", id);
 
@@ -394,7 +395,7 @@ export async function registerRoutes(
           }
 
           // 3. Delete Temp Analysis
-          const tempAnalysisPath = isVercel
+          const tempAnalysisPath = (isVercel || isRender)
             ? path.join(os.tmpdir(), "zip-analysis", id)
             : path.join(process.cwd(), "tmp", "zip-analysis", id);
 
@@ -540,7 +541,7 @@ export async function registerRoutes(
       
       // Create organized storage path
       const projectId = crypto.randomUUID().substring(0, 12);
-      const storedDir = isVercel 
+      const storedDir = (isVercel || isRender)
         ? path.join(os.tmpdir(), "uploads", "projects", projectId)
         : path.join(process.cwd(), "uploads", "projects", projectId);
         
