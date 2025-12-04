@@ -125,8 +125,13 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
         if (!hasNodeModules && fs.existsSync(path.join(project.normalizedFolderPath, "package.json"))) {
           await logQa(project.id, "Installing dependencies for test execution...");
           // Use --legacy-peer-deps to avoid ERESOLVE errors
-          // Added --no-audit --no-fund --loglevel=error for speed on Render
-          await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error", { cwd: project.normalizedFolderPath, timeout: 300000 }); 
+          // Added --no-audit --no-fund --loglevel=error --no-progress for speed and memory optimization on Render
+          // We also set NODE_OPTIONS to limit memory usage to avoid OOM kills (Render Free Tier has 512MB)
+          await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
+            cwd: project.normalizedFolderPath, 
+            timeout: 480000, // 8 minutes
+            env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" } 
+          }); 
           await logQa(project.id, "Dependencies installed.");
         }
       } catch (e) {
@@ -330,7 +335,11 @@ async function runLocalTests(folderPath: string, projectId: string): Promise<{ r
       await logQa(projectId, "Running lint check...");
       report += "\n[Running Lint]\n";
       try {
-        const { stdout, stderr } = await execAsync("npm run lint", { cwd: folderPath, timeout: 30000 });
+        const { stdout, stderr } = await execAsync("npm run lint", { 
+          cwd: folderPath, 
+          timeout: 60000,
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+        });
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
         await logQa(projectId, "Lint check passed.");
       } catch (e: any) {
@@ -347,7 +356,11 @@ async function runLocalTests(folderPath: string, projectId: string): Promise<{ r
       await logQa(projectId, "Running unit tests...");
       report += "\n[Running Tests]\n";
       try {
-        const { stdout, stderr } = await execAsync("npm test", { cwd: folderPath, timeout: 60000 });
+        const { stdout, stderr } = await execAsync("npm test", { 
+          cwd: folderPath, 
+          timeout: 120000,
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+        });
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
         await logQa(projectId, "Unit tests passed.");
       } catch (e: any) {
@@ -364,7 +377,11 @@ async function runLocalTests(folderPath: string, projectId: string): Promise<{ r
       await logQa(projectId, "Running build check...");
       report += "\n[Running Build Check]\n";
       try {
-        const { stdout, stderr } = await execAsync("npm run build", { cwd: folderPath, timeout: 120000 });
+        const { stdout, stderr } = await execAsync("npm run build", { 
+          cwd: folderPath, 
+          timeout: 300000,
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+        });
         report += `Output:\n${stdout}\n${stderr}\nResult: PASS\n`;
         await logQa(projectId, "Build check passed.");
       } catch (e: any) {

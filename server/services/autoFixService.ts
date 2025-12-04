@@ -180,9 +180,14 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         }
 
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
-        // Added --no-audit --no-fund --loglevel=error for speed optimization
-        // Increased timeout to 5 minutes for slower environments (Render Free Tier)
-        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error", { cwd: folderPath, timeout: 300000 });
+        // Added --no-audit --no-fund --loglevel=error --no-progress for speed/memory optimization
+        // Increased timeout to 8 minutes for slower environments (Render Free Tier)
+        // Added NODE_OPTIONS to prevent OOM crashes (limit to 400MB heap)
+        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
+          cwd: folderPath, 
+          timeout: 480000,
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+        });
         await addAction("Installed project dependencies");
 
         // Fix security vulnerabilities
@@ -214,8 +219,13 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
       
       // 1. Try to build
       try {
-        // Increased timeout to 3 minutes for slower environments
-        await execAsync("npm run build", { cwd: folderPath, timeout: 180000 });
+        // Increased timeout to 5 minutes for slower environments
+        // Added memory limit
+        await execAsync("npm run build", { 
+          cwd: folderPath, 
+          timeout: 300000,
+          env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+        });
         await addAction("Build successful!");
         buildSuccess = true;
         break; // Exit loop if build succeeds

@@ -1300,17 +1300,16 @@ If the user asks to perform one of these actions, CALL THE CORRESPONDING TOOL/FU
               }
               
               const flag = dev ? "--save-dev" : "";
-              // Added --no-audit --no-fund for speed on Render
-              const command = `npm install ${packageName} ${flag} --no-audit --no-fund`;
+              // Added --no-audit --no-fund --no-progress for speed/memory on Render
+              const command = `npm install ${packageName} ${flag} --no-audit --no-fund --no-progress`;
               
               toolResult = `Installing ${packageName}... This might take a moment.`;
               
-              // Run in background but don't await for the full install in the chat response
-              // or maybe we should await it to confirm success? 
-              // npm install can be slow. Let's await it but with a timeout or just trust it works?
-              // Better to await it so we know if it failed.
-              
-              await execAsync(command, { cwd: project.normalizedFolderPath });
+              // Run with memory limits
+              await execAsync(command, { 
+                cwd: project.normalizedFolderPath,
+                env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
+              });
               toolResult = `Successfully installed ${packageName}.`;
            } catch (err) {
               toolResult = `Error installing package: ${err instanceof Error ? err.message : String(err)}`;
