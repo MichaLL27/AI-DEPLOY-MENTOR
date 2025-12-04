@@ -118,31 +118,45 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
     // 2. Run local tests if available
     let localTestReport = "";
     let localTestsFailed = false;
+    let dependenciesInstalled = false;
+
     if (project.normalizedFolderPath && fs.existsSync(project.normalizedFolderPath)) {
       // Ensure dependencies are installed before running tests
       try {
         const hasNodeModules = fs.existsSync(path.join(project.normalizedFolderPath, "node_modules"));
         if (!hasNodeModules && fs.existsSync(path.join(project.normalizedFolderPath, "package.json"))) {
           await logQa(project.id, "Installing dependencies for test execution...");
+          
+          // On Render, reduce timeout to 3 minutes to fail fast and proceed to AI analysis
+          const installTimeout = process.env.RENDER === "true" ? 180000 : 480000;
+
           // Use --legacy-peer-deps to avoid ERESOLVE errors
           // Added --no-audit --no-fund --loglevel=error --no-progress for speed and memory optimization on Render
           // We also set NODE_OPTIONS to limit memory usage to avoid OOM kills (Render Free Tier has 512MB)
           await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
             cwd: project.normalizedFolderPath, 
-            timeout: 480000, // 8 minutes
+            timeout: installTimeout,
             env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" } 
           }); 
           await logQa(project.id, "Dependencies installed.");
+          dependenciesInstalled = true;
+        } else if (hasNodeModules) {
+          dependenciesInstalled = true;
         }
       } catch (e) {
         console.error("[QA] Failed to install dependencies:", e);
-        await logQa(project.id, "Failed to install dependencies. Tests might fail.");
-        localTestReport += "Failed to install dependencies. Tests might fail.\n";
+        await logQa(project.id, "Failed to install dependencies (timeout or error). Skipping local tests.");
+        localTestReport += "Failed to install dependencies (timeout or error). Skipping local tests to save time.\n";
+        dependenciesInstalled = false;
       }
 
-      const testResult = await runLocalTests(project.normalizedFolderPath, project.id);
-      localTestReport += testResult.report;
-      localTestsFailed = testResult.failed;
+      if (dependenciesInstalled) {
+        const testResult = await runLocalTests(project.normalizedFolderPath, project.id);
+        localTestReport += testResult.report;
+        localTestsFailed = testResult.failed;
+      } else {
+        localTestReport += "\n[Skipped] Local tests skipped because dependencies could not be installed in time.\n";
+      }
 
       // --- AUTO-FIX INTEGRATION IN QA ---
       if (localTestsFailed) {

@@ -288,7 +288,6 @@ async function normalizeSafeCleanup(
  */
 async function removeJunkFiles(dir: string, actions: string[]): Promise<void> {
   const junkPatterns = [
-    "node_modules",
     ".git",
     ".gitignore",
     ".DS_Store",
@@ -301,6 +300,14 @@ async function removeJunkFiles(dir: string, actions: string[]): Promise<void> {
     "Thumbs.db",
     ".env.local",
   ];
+
+  // Only remove node_modules if NOT on Render
+  // On Render, we want to keep uploaded node_modules to speed up install
+  if (process.env.RENDER !== "true") {
+    junkPatterns.push("node_modules");
+  } else {
+    actions.push("Preserved node_modules (if present) to speed up Render deployment.");
+  }
 
   const filesToRemove: string[] = [];
 

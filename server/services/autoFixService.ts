@@ -176,16 +176,20 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         await logAutoFix(project.id, "Installing dependencies (this may take a few minutes)...");
         
         if (process.env.RENDER) {
-           await logAutoFix(project.id, "⚠️ Notice: Running on Render Free Tier. Due to limited CPU/RAM, installation will take significantly longer than on a local machine.");
+           await logAutoFix(project.id, "⚠️ Notice: Running on Render Free Tier. Due to limited CPU/RAM, installation will take significantly longer than on a local machine. If you uploaded node_modules, this will be faster.");
         }
 
         // Use --legacy-peer-deps to avoid ERESOLVE errors with older React versions
         // Added --no-audit --no-fund --loglevel=error --no-progress for speed/memory optimization
         // Increased timeout to 8 minutes for slower environments (Render Free Tier)
         // Added NODE_OPTIONS to prevent OOM crashes (limit to 400MB heap)
+        
+        // On Render, reduce timeout to 5 minutes (300000ms) to fail fast if it's stuck
+        const installTimeout = process.env.RENDER === "true" ? 300000 : 480000;
+
         await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
           cwd: folderPath, 
-          timeout: 480000,
+          timeout: installTimeout,
           env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
         });
         await addAction("Installed project dependencies");
