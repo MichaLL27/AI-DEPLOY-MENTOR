@@ -47,7 +47,7 @@ import {
   Bot,
 } from "lucide-react";
 import { formatDistanceToNow, format } from "date-fns";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 import { DeploymentStepper } from "@/components/deployment-stepper";
