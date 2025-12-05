@@ -149,6 +149,30 @@ services:
       ]
     };
     shouldWriteVercel = true;
+  } else {
+    // Default fallback for unknown types (e.g. Node.js backend or generic)
+    // If it's a backend, Vercel might need @vercel/node
+    // But if it's just a generic frontend, let's try to be safe.
+    // For now, let's NOT write vercel.json for unknown types to avoid breaking them if they have their own config.
+    // UNLESS we are sure.
+    
+    // Actually, if we don't write vercel.json, Vercel tries to auto-detect.
+    // The issue is often that Vercel auto-detects "Create React App" or "Vite" but fails to set the rewrite rule for SPA.
+    // So if we can detect it's an SPA but projectType is generic, we should add it.
+    
+    // Let's add a generic catch-all that assumes if there is an index.html, it might be an SPA.
+    if (fs.existsSync(path.join(folderPath, "index.html"))) {
+       vercelConfig = {
+        ...vercelConfig,
+        routes: [
+          {
+            src: "/(.*)",
+            dest: "/index.html"
+          }
+        ]
+      };
+      shouldWriteVercel = true;
+    }
   }
 
   if (shouldWriteVercel) {
