@@ -78,100 +78,44 @@ services:
   configs.push("Render (render.yaml)");
 
   // 5. Vercel (vercel.json)
+  // We prefer using 'rewrites' (modern) over 'routes' (legacy)
   let vercelConfig: any = {
     version: 2,
     name: projectName,
+    cleanUrls: true,
+    framework: null // Explicitly tell Vercel we are providing config if we write this file? 
+                    // Actually, if we want auto-detection, we shouldn't write 'builds'.
+                    // But we DO want rewrites for SPAs.
   };
 
   let shouldWriteVercel = false;
 
+  // Helper to add SPA rewrite
+  const addSpaRewrite = () => {
+    vercelConfig.rewrites = [
+      { source: "/(.*)", destination: "/index.html" }
+    ];
+    shouldWriteVercel = true;
+  };
+
   if (projectType === "angular") {
-    // Try to find output path from angular.json
-    let outputPath = "dist";
-    const angularJsonPath = path.join(folderPath, "angular.json");
-    if (fs.existsSync(angularJsonPath)) {
-      try {
-        const angularJson = JSON.parse(fs.readFileSync(angularJsonPath, "utf-8"));
-        const defaultProject = angularJson.defaultProject || Object.keys(angularJson.projects)[0];
-        if (defaultProject && angularJson.projects[defaultProject]?.architect?.build?.options?.outputPath) {
-          outputPath = angularJson.projects[defaultProject].architect.build.options.outputPath;
-        }
-      } catch (e) {}
-    }
-
-    vercelConfig = {
-      ...vercelConfig,
-      builds: [
-        {
-          src: "package.json",
-          use: "@vercel/static-build",
-          config: { distDir: outputPath }
-        }
-      ],
-      routes: [
-        {
-          src: "/(.*)",
-          dest: "/index.html"
-        }
-      ]
-    };
-    shouldWriteVercel = true;
+    // For Angular, Vercel usually auto-detects. 
+    // But if we want to be safe, we can add rewrites.
+    // We do NOT add 'builds' so Vercel uses its default Angular builder which is better.
+    addSpaRewrite();
   } else if (projectType === "react_spa" || projectType === "vite") {
-    // Check for Vite
-    const isVite = fs.existsSync(path.join(folderPath, "vite.config.ts")) || fs.existsSync(path.join(folderPath, "vite.config.js"));
-    const distDir = isVite ? "dist" : "build";
-
-    vercelConfig = {
-      ...vercelConfig,
-      builds: [
-        {
-          src: "package.json",
-          use: "@vercel/static-build",
-          config: { distDir }
-        }
-      ],
-      routes: [
-        {
-          src: "/(.*)",
-          dest: "/index.html"
-        }
-      ]
-    };
-    shouldWriteVercel = true;
+    // For React/Vite, Vercel usually auto-detects.
+    // We just add rewrites to be safe for client-side routing.
+    addSpaRewrite();
   } else if (projectType === "static_web") {
-    vercelConfig = {
-      ...vercelConfig,
-      routes: [
-        {
-          src: "/(.*)",
-          dest: "/index.html"
-        }
-      ]
-    };
-    shouldWriteVercel = true;
-  } else {
-    // Default fallback for unknown types (e.g. Node.js backend or generic)
-    // If it's a backend, Vercel might need @vercel/node
-    // But if it's just a generic frontend, let's try to be safe.
-    // For now, let's NOT write vercel.json for unknown types to avoid breaking them if they have their own config.
-    // UNLESS we are sure.
-    
-    // Actually, if we don't write vercel.json, Vercel tries to auto-detect.
-    // The issue is often that Vercel auto-detects "Create React App" or "Vite" but fails to set the rewrite rule for SPA.
-    // So if we can detect it's an SPA but projectType is generic, we should add it.
-    
-    // Let's add a generic catch-all that assumes if there is an index.html, it might be an SPA.
+    // For static web, we might need rewrites if it's an SPA without a framework
     if (fs.existsSync(path.join(folderPath, "index.html"))) {
-       vercelConfig = {
-        ...vercelConfig,
-        routes: [
-          {
-            src: "/(.*)",
-            dest: "/index.html"
-          }
-        ]
-      };
-      shouldWriteVercel = true;
+       addSpaRewrite();
+    }
+  } else {
+    // Fallback: If index.html exists, assume SPA behavior is desired
+    if (fs.existsSync(path.join(folderPath, "index.html"))) {
+       addSpaRewrite();
     }
   }
 

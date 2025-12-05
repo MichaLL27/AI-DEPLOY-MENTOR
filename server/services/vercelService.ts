@@ -262,11 +262,25 @@ async function deployZipToVercel(project: Project, token: string, envVars: any[]
   console.log(`[Vercel] Prepared ${files.length} files for upload.`);
 
   // 2. Create Deployment (Check for missing files)
-  const deployBody = {
+  // We omit 'projectSettings: { framework: null }' to allow Vercel to auto-detect the framework.
+  // This fixes issues where manual configuration might be incorrect or legacy.
+  const deployBody: any = {
     name: sanitizedName,
     files: files.map(f => ({ file: f.file, sha: f.sha, size: f.size })),
-    projectSettings: { framework: null }
   };
+
+  // Only force framework: null if we have a vercel.json that explicitly defines builds (legacy mode)
+  // Otherwise, let Vercel do its magic.
+  const hasVercelJson = files.some(f => f.file === "vercel.json");
+  if (hasVercelJson) {
+     // Check if it has 'builds'
+     try {
+       const vConfig = JSON.parse(fs.readFileSync(path.join(project.normalizedFolderPath, "vercel.json"), "utf-8"));
+       if (vConfig.builds) {
+         deployBody.projectSettings = { framework: null };
+       }
+     } catch (e) {}
+  }
 
   let deployRes = await fetch("https://api.vercel.com/v13/deployments", {
     method: "POST",
