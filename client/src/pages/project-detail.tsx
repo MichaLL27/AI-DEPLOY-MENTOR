@@ -91,6 +91,9 @@ export default function ProjectDetail() {
   const [showAutoFixDialog, setShowAutoFixDialog] = useState(false);
   const [showQaDialog, setShowQaDialog] = useState(false);
 
+  // Track previous status to detect completion
+  const [prevStatus, setPrevStatus] = useState<string | undefined>(undefined);
+
   const { data: project, isLoading, error } = useQuery<Project>({
     queryKey: ["/api/projects", id],
     refetchInterval: (query) => {
@@ -106,6 +109,31 @@ export default function ProjectDetail() {
       return false;
     },
   });
+
+  useEffect(() => {
+    if (project?.status && prevStatus && prevStatus !== project.status) {
+      if (prevStatus === "qa_running" && project.status === "qa_passed") {
+         // QA Finished Successfully
+         const fixes = project.qaReport?.match(/\[QA Auto-Fix\] Applied (\d+) fixes/);
+         const fixCount = fixes ? fixes[1] : 0;
+         
+         toast({
+            title: fixCount > 0 ? `QA Passed with ${fixCount} Auto-Fixes` : "QA completed",
+            description: "Quality checks have passed successfully.",
+         });
+         openChatWithContext("QA passed successfully! Please congratulate me and tell me if I'm ready to deploy.");
+      } else if (prevStatus === "qa_running" && project.status === "qa_failed") {
+         // QA Failed
+         toast({
+            title: "QA failed",
+            description: "Quality checks failed. Please check the report.",
+            variant: "destructive",
+         });
+         openChatWithContext("The QA checks failed. Can you analyze the report and tell me how to fix the issues?");
+      }
+    }
+    setPrevStatus(project?.status);
+  }, [project?.status, prevStatus]);
 
   const updateProjectMutation = useMutation({
     mutationFn: async (updates: Partial<Project>) => {
@@ -156,6 +184,14 @@ export default function ProjectDetail() {
       
       // Dialog stays open to show results
       
+      if (data.status === "qa_running") {
+        toast({
+          title: "QA Started",
+          description: "Quality checks are running in the background...",
+        });
+        return;
+      }
+
       if (data.status === "qa_failed") {
         toast({
           title: "QA failed",
