@@ -133,7 +133,8 @@ export async function runQaOnProject(project: Project): Promise<QaResult> {
           // Use --legacy-peer-deps to avoid ERESOLVE errors
           // Added --no-audit --no-fund --loglevel=error --no-progress for speed and memory optimization on Render
           // We also set NODE_OPTIONS to limit memory usage to avoid OOM kills (Render Free Tier has 512MB)
-          await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
+          // Force install devDependencies even if NODE_ENV is production
+          await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress --production=false", { 
             cwd: project.normalizedFolderPath, 
             timeout: installTimeout,
             env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" } 

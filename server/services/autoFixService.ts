@@ -187,7 +187,8 @@ export async function autoFixProject(project: Project): Promise<AutoFixResult> {
         // On Render, reduce timeout to 5 minutes (300000ms) to fail fast if it's stuck
         const installTimeout = process.env.RENDER === "true" ? 300000 : 480000;
 
-        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress", { 
+        // Force install devDependencies even if NODE_ENV is production
+        await execAsync("npm install --legacy-peer-deps --no-audit --no-fund --loglevel=error --no-progress --production=false", { 
           cwd: folderPath, 
           timeout: installTimeout,
           env: { ...process.env, NODE_OPTIONS: "--max-old-space-size=400" }
@@ -452,6 +453,44 @@ async function applyTargetedFix(
      }
   }
 
+  // 5. Esbuild missing (Vite/Esbuild issue)
+  else if (
+      (errorOutput.includes("esbuild") && (errorOutput.includes("missing") || errorOutput.includes("not found") || errorOutput.includes("failed to load"))) ||
+      errorOutput.includes("The package \"esbuild\" could not be found")
+  ) {
+     await addAction("Detected missing esbuild binary/package");
+     
+     // Force install esbuild as a regular dependency to ensure it persists
+     await execAsync("npm install esbuild --save --legacy-peer-deps", { cwd: folderPath });
+     await addAction("Installed esbuild");
+     
+     // Force rebuild to ensure binary is present
+     try {
+        await execAsync("npm rebuild esbuild", { cwd: folderPath });
+        await addAction("Rebuilt esbuild binary");
+     } catch (e) {
+        // Ignore rebuild error
+     }
+     
+     fixed = true;
+  }
+
+  // 6. Angular CLI missing
+  else if (
+      errorOutput.includes("ng: command not found") || 
+      errorOutput.includes("command not found: ng") ||
+      errorOutput.includes("Angular CLI is missing") ||
+      errorOutput.includes("'ng' is not recognized")
+  ) {
+     await addAction("Detected missing Angular CLI");
+     
+     // Install Angular CLI
+     await execAsync("npm install @angular/cli --save-dev --legacy-peer-deps", { cwd: folderPath });
+     await addAction("Installed @angular/cli");
+     
+     fixed = true;
+  }
+
   return fixed;
 }
 
@@ -607,6 +646,24 @@ async function fixAngularProject(
 
     // Ensure scripts exist
     if (!pkg.scripts) pkg.scripts = {};
+
+    // Ensure @angular/cli is installed
+    const hasCli = (pkg.devDependencies && pkg.devDependencies["@angular/cli"]) || 
+                   (pkg.dependencies && pkg.dependencies["@angular/cli"]);
+    
+    if (!hasCli) {
+      await addAction("Angular CLI not found in package.json. Installing...");
+      try {
+        await execAsync("npm install @angular/cli typescript --save-dev --legacy-peer-deps", { cwd: folderPath });
+        await addAction("Installed @angular/cli and typescript");
+        // Reload package.json
+        const newPkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8"));
+        if (newPkg.devDependencies) pkg.devDependencies = newPkg.devDependencies;
+        if (newPkg.dependencies) pkg.dependencies = newPkg.dependencies;
+      } catch (e) {
+        console.error("Failed to install Angular CLI:", e);
+      }
+    }
 
     // Fix build script: Avoid --prod for newer Angular versions
     if (!pkg.scripts.build) {
