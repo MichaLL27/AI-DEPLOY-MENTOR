@@ -12,5 +12,9 @@ services:
         sync: false
       - key: SESSION_SECRET
         sync: false
-      - key: AI_INTEGRATIONS_OPENAI_API_KEY
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: VERCEL_TOKEN
+        sync: false
+      - key: RENDER_API_TOKEN
         sync: false
