@@ -262,24 +262,60 @@ async function deployZipToVercel(project: Project, token: string, envVars: any[]
   console.log(`[Vercel] Prepared ${files.length} files for upload.`);
 
   // 2. Create Deployment (Check for missing files)
-  // We omit 'projectSettings: { framework: null }' to allow Vercel to auto-detect the framework.
-  // This fixes issues where manual configuration might be incorrect or legacy.
   const deployBody: any = {
     name: sanitizedName,
     files: files.map(f => ({ file: f.file, sha: f.sha, size: f.size })),
+    projectSettings: {}
   };
 
-  // Only force framework: null if we have a vercel.json that explicitly defines builds (legacy mode)
-  // Otherwise, let Vercel do its magic.
-  const hasVercelJson = files.some(f => f.file === "vercel.json");
-  if (hasVercelJson) {
-     // Check if it has 'builds'
-     try {
-       const vConfig = JSON.parse(fs.readFileSync(path.join(project.normalizedFolderPath, "vercel.json"), "utf-8"));
-       if (vConfig.builds) {
-         deployBody.projectSettings = { framework: null };
-       }
-     } catch (e) {}
+  // Map our project types to Vercel Framework Presets
+  // This helps Vercel know how to build and serve the project correctly
+  const frameworkMap: Record<string, string> = {
+    "nextjs": "nextjs",
+    "create-react-app": "create-react-app",
+    "react_spa": "create-react-app", // Default to CRA for generic React
+    "angular": "angular",
+    "vue": "vue",
+    "svelte": "svelte",
+    "vite": "vite",
+    "gatsby": "gatsby",
+    "nuxtjs": "nuxtjs"
+  };
+
+  // Try to detect framework from project type or package.json
+  let framework = frameworkMap[project.projectType || ""] || null;
+
+  // Refine detection if generic
+  if (!framework) {
+     const pkgPath = path.join(project.normalizedFolderPath, "package.json");
+     if (fs.existsSync(pkgPath)) {
+       try {
+         const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf-8"));
+         const deps = { ...pkg.dependencies, ...pkg.devDependencies };
+         
+         if (deps["vite"]) framework = "vite";
+         else if (deps["react-scripts"]) framework = "create-react-app";
+         else if (deps["next"]) framework = "nextjs";
+         else if (deps["@angular/core"]) framework = "angular";
+       } catch (e) {}
+     }
+  }
+
+  if (framework) {
+    console.log(`[Vercel] Explicitly setting framework to: ${framework}`);
+    deployBody.projectSettings.framework = framework;
+  } else {
+    // If no framework detected, let Vercel auto-detect or use 'null' (Other)
+    // But if we have a vercel.json with builds, we MUST use null.
+    const hasVercelJson = files.some(f => f.file === "vercel.json");
+    if (hasVercelJson) {
+       try {
+         const vConfig = JSON.parse(fs.readFileSync(path.join(project.normalizedFolderPath, "vercel.json"), "utf-8"));
+         if (vConfig.builds) {
+           deployBody.projectSettings.framework = null;
+         }
+       } catch (e) {}
+    }
   }
 
   let deployRes = await fetch("https://api.vercel.com/v13/deployments", {
