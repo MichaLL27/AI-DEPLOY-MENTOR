@@ -77,5 +77,84 @@ services:
   fs.writeFileSync(path.join(folderPath, "render.yaml"), renderConfig.trim());
   configs.push("Render (render.yaml)");
 
+  // 5. Vercel (vercel.json)
+  let vercelConfig: any = {
+    version: 2,
+    name: projectName,
+  };
+
+  let shouldWriteVercel = false;
+
+  if (projectType === "angular") {
+    // Try to find output path from angular.json
+    let outputPath = "dist";
+    const angularJsonPath = path.join(folderPath, "angular.json");
+    if (fs.existsSync(angularJsonPath)) {
+      try {
+        const angularJson = JSON.parse(fs.readFileSync(angularJsonPath, "utf-8"));
+        const defaultProject = angularJson.defaultProject || Object.keys(angularJson.projects)[0];
+        if (defaultProject && angularJson.projects[defaultProject]?.architect?.build?.options?.outputPath) {
+          outputPath = angularJson.projects[defaultProject].architect.build.options.outputPath;
+        }
+      } catch (e) {}
+    }
+
+    vercelConfig = {
+      ...vercelConfig,
+      builds: [
+        {
+          src: "package.json",
+          use: "@vercel/static-build",
+          config: { distDir: outputPath }
+        }
+      ],
+      routes: [
+        {
+          src: "/(.*)",
+          dest: "/index.html"
+        }
+      ]
+    };
+    shouldWriteVercel = true;
+  } else if (projectType === "react_spa" || projectType === "vite") {
+    // Check for Vite
+    const isVite = fs.existsSync(path.join(folderPath, "vite.config.ts")) || fs.existsSync(path.join(folderPath, "vite.config.js"));
+    const distDir = isVite ? "dist" : "build";
+
+    vercelConfig = {
+      ...vercelConfig,
+      builds: [
+        {
+          src: "package.json",
+          use: "@vercel/static-build",
+          config: { distDir }
+        }
+      ],
+      routes: [
+        {
+          src: "/(.*)",
+          dest: "/index.html"
+        }
+      ]
+    };
+    shouldWriteVercel = true;
+  } else if (projectType === "static_web") {
+    vercelConfig = {
+      ...vercelConfig,
+      routes: [
+        {
+          src: "/(.*)",
+          dest: "/index.html"
+        }
+      ]
+    };
+    shouldWriteVercel = true;
+  }
+
+  if (shouldWriteVercel) {
+    fs.writeFileSync(path.join(folderPath, "vercel.json"), JSON.stringify(vercelConfig, null, 2));
+    configs.push("Vercel (vercel.json)");
+  }
+
   return configs;
 }
