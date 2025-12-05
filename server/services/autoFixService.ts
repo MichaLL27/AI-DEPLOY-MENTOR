@@ -517,10 +517,17 @@ async function fixMissingDependencies(
     const regex1 = /Module not found: Error: Can't resolve '([^']+)'/g;
     const regex2 = /Cannot find module '([^']+)'/g;
     const regex3 = /Error: '([^']+)' is not recognized/g; // Sometimes happens with missing CLI tools
+    const regex4 = /The package "([^"]+)" could not be found, and is needed by Vite/g; // Vite specific
 
     let match;
     while ((match = regex1.exec(output)) !== null) missingModules.add(match[1]);
     while ((match = regex2.exec(output)) !== null) missingModules.add(match[1]);
+    while ((match = regex4.exec(output)) !== null) missingModules.add(match[1]);
+    
+    // Special check for esbuild if not caught by regex but mentioned
+    if (output.includes("esbuild") && (output.includes("missing") || output.includes("not found") || output.includes("failed to load"))) {
+        missingModules.add("esbuild");
+    }
     
     // Filter out relative paths (local files)
     const modulesToInstall = Array.from(missingModules).filter(m => !m.startsWith(".") && !m.startsWith("/"));
