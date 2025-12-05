@@ -2,7 +2,7 @@ services:
   - type: web
     name: ai-deploy-mentor
     env: node
-    plan: free
+    plan: standard
     buildCommand: npm install --production=false --no-audit --no-fund --loglevel=error && npm run build
     startCommand: npm run start
     envVars:
