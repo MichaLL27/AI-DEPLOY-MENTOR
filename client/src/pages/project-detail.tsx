@@ -52,7 +52,6 @@ import { useState, useEffect } from "react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 
 import { DeploymentStepper } from "@/components/deployment-stepper";
-import { EnvVarsPanel } from "@/components/env-vars-panel";
 
 import {
   Select,
@@ -1167,13 +1166,7 @@ export default function ProjectDetail() {
         </div>
       )}
 
-      <div className="mb-8">
-        <EnvVarsPanel 
-          projectId={id!} 
-          onDeploy={canDeploy ? () => deployMutation.mutate() : undefined}
-          isDeploying={isDeploying}
-        />
-      </div>
+
 
       {prs && prs.length > 0 && (
         <div className="mb-8">
