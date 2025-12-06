@@ -710,12 +710,15 @@ export async function syncEnvVarsToRender(project: Project): Promise<{ success: 
  */
 export async function deployProject(project: Project): Promise<DeployResult> {
   // Validate project is ready for deployment
-  // (Note: We relax the check slightly to allow recovery if source is missing but status was 'deployed' previously)
-  if (!["qa_passed", "deployed", "deploy_failed", "recovery_triggered", "qa_failed"].includes(project.status)) {
+  // Relaxed check: Allow if auto-fix passed OR if status is qa_passed/deployed/failed/recovery_triggered
+  const isAutoFixed = project.autoFixStatus === "success";
+  const isQaPassed = ["qa_passed", "deployed", "deploy_failed", "recovery_triggered", "qa_failed"].includes(project.status);
+
+  if (!isQaPassed && !isAutoFixed) {
     return {
       success: false,
       deployedUrl: null,
-      error: "Project must pass QA before deployment",
+      error: "Project must pass Auto-Fix before deployment",
     };
   }
 

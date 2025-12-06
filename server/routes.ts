@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { storage } from "./storage";
 import { db } from "./db";
 import { insertProjectSchema } from "@shared/schema";
-import { runQaOnProject } from "./services/qaService";
+// import { runQaOnProject } from "./services/qaService";
 import { deployProject, syncEnvVarsToRender } from "./services/deployService";
 import { generateAndroidWrapper } from "./services/mobileAndroidService";
 import { generateIosWrapper } from "./services/mobileIosService";
@@ -233,94 +233,9 @@ export async function registerRoutes(
     }
   });
 
-  // POST /api/projects/:id/run-qa - Run QA on project
+  // POST /api/projects/:id/run-qa - Run QA on project (DISABLED)
   app.post("/api/projects/:id/run-qa", async (req, res) => {
-    try {
-      const { id } = req.params;
-      let project = await storage.getProject(id);
-      
-      if (!project) {
-        return res.status(404).json({ error: "Project not found" });
-      }
-
-      // Only allow QA on registered, failed, or deployed projects (allow re-verification)
-      if (!["registered", "qa_failed", "qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
-        return res.status(400).json({ 
-          error: `Cannot run QA on project with status: ${project.status}` 
-        });
-      }
-
-      // FORCE RE-ANALYSIS to ensure we have the correct project type
-      // This fixes the issue where a project was misclassified before a logic fix
-      if (project.sourceType === "zip" || project.sourceType === "github") {
-         console.log(`[QA] Re-analyzing project ${id} to ensure correct classification...`);
-         try {
-            // Log to UI so user sees what's happening
-            await storage.updateProject(id, { qaLogs: `[${new Date().toISOString()}] Re-analyzing project structure to ensure correct classification...\n` });
-
-            const analysis = await analyzeZipProject(project);
-            
-            // Update project with new analysis results
-            const updated = await storage.updateProject(id, {
-              projectType: analysis.projectType,
-              projectValidity: analysis.projectValidity,
-              validationErrors: JSON.stringify(analysis.validationErrors),
-              normalizedStatus: analysis.normalizedStatus,
-              normalizedFolderPath: analysis.normalizedFolderPath,
-              normalizedReport: analysis.normalizedReport,
-              readyForDeploy: analysis.readyForDeploy ? "true" : "false",
-              zipAnalysisReport: analysis.analysisReport,
-              structureJson: analysis.structureJson,
-            } as any);
-            
-            if (updated) {
-              project = updated;
-            }
-         } catch (err) {
-            console.error("[QA] Re-analysis failed:", err);
-            // We continue, but warn
-         }
-      }
-
-      // Auto-fix if not already done or if it failed previously
-      // This ensures we always test the best version of the code
-      if (project.autoFixStatus !== "success") {
-        return res.status(400).json({ 
-          error: "Please run Auto-fix before running QA checks." 
-        });
-      }
-
-      // Update status to qa_running
-      await storage.updateProject(id, { status: "qa_running" });
-
-      // Run QA checks in BACKGROUND to avoid Render timeouts
-      runQaOnProject(project).then(async (qaResult) => {
-        await storage.updateProject(id, {
-          status: qaResult.passed ? "qa_passed" : "qa_failed",
-          qaReport: qaResult.report,
-          // qaLastRun: new Date(), // Removed as it's not in schema
-        });
-      }).catch(async (err) => {
-        console.error("Background QA failed:", err);
-        await storage.updateProject(id, { 
-          status: "qa_failed", 
-          qaReport: `Internal Server Error during QA execution: ${err.message}` 
-        });
-      });
-
-      // Return immediately
-      res.json({ 
-        status: "qa_running", 
-        message: "QA started in background. Please poll for updates." 
-      });
-    } catch (error) {
-      console.error("Error running QA:", error);
-      // Try to update status to failed
-      try {
-        await storage.updateProject(req.params.id, { status: "qa_failed" });
-      } catch {}
-      res.status(500).json({ error: "Failed to start QA process" });
-    }
+    return res.status(400).json({ error: "QA feature has been disabled." });
   });
 
   // POST /api/projects/:id/deploy - Deploy project
@@ -334,9 +249,13 @@ export async function registerRoutes(
       }
 
       // Only allow deployment on qa_passed projects
-      if (!["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status)) {
+      // Relaxed: Allow if auto-fix passed OR if status is qa_passed/deployed/failed
+      const isAutoFixed = project.autoFixStatus === "success";
+      const isQaPassed = ["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status);
+      
+      if (!isQaPassed && !isAutoFixed) {
         return res.status(400).json({ 
-          error: "Project must pass QA before deployment" 
+          error: "Project must pass Auto-Fix before deployment" 
         });
       }
 
@@ -1026,7 +945,7 @@ Context:
 ${context}
 
 CRITICAL INSTRUCTIONS FOR ANALYSIS & GUIDANCE:
-1. DIAGNOSIS: If the project failed to build, deploy, or pass QA, explain EXACTLY why based on the logs and reports. Don't just say "it failed", explain the root cause (e.g., "Missing environment variable DATABASE_URL", "Syntax error in line 42").
+1. DIAGNOSIS: If the project failed to build or deploy, explain EXACTLY why based on the logs and reports. Don't just say "it failed", explain the root cause (e.g., "Missing environment variable DATABASE_URL", "Syntax error in line 42").
 2. GAP ANALYSIS: Even if the project runs, analyze if it is "production-ready". Point out missing best practices, security vulnerabilities, or missing environment variables. Tell the user what is missing for the project to work PERFECTLY.
 3. DEEP LOGIC ANALYSIS: Don't just look at syntax. Analyze the BUSINESS LOGIC. Ask yourself:
    - Does the authentication flow actually protect routes?
@@ -1039,7 +958,6 @@ Answer the user's questions based on this context. Be helpful, concise, and tech
 You can also perform actions on the project if the user requests them.
 Available actions:
 - Run Auto-Fix: Repairs code, structure, and environment variables.
-- Run QA: Runs quality assurance checks and tests.
 - Deploy: Deploys the project to the configured provider.
 - Read File: Read the content of a specific file to answer questions about the code.
 - Write File: Create or update a file with new content.
@@ -1058,14 +976,7 @@ If the user asks to perform one of these actions, CALL THE CORRESPONDING TOOL/FU
             parameters: { type: "object", properties: {} }
           }
         },
-        {
-          type: "function",
-          function: {
-            name: "run_qa",
-            description: "Run Quality Assurance checks and tests.",
-            parameters: { type: "object", properties: {} }
-          }
-        },
+
         {
           type: "function",
           function: {
@@ -1597,31 +1508,14 @@ resource "digitalocean_droplet" "web" {
              toolResult = "I cannot run Auto-Fix because the project is not normalized yet.";
           }
         } else if (functionName === "run_qa") {
-           // Trigger QA
-           // We can't easily await the full QA here as it might take time, but QA is usually faster than AutoFix.
-           // However, for chat responsiveness, let's trigger it and tell the user.
-           // Actually, the existing QA route awaits it. Let's try to await it if it's fast, or just trigger.
-           // Let's trigger it similar to the route logic but we need to be careful about response time.
-           // Better: Just tell the frontend to trigger it? No, the user wants the AI to do it.
-           
-           // Let's just update status and run it.
-           if (["registered", "qa_failed", "qa_passed", "deployed", "deploy_failed"].includes(project.status)) {
-              await storage.updateProject(id, { status: "qa_running" });
-              
-              // Run in background so chat doesn't timeout
-              runQaOnProject(project).then(async (qaResult) => {
-                 await storage.updateProject(id, {
-                    status: qaResult.passed ? "qa_passed" : "qa_failed",
-                    qaReport: qaResult.report,
-                 });
-              });
-              
-              toolResult = "I have started the Quality Assurance checks. The status will update shortly.";
-           } else {
-              toolResult = `I cannot run QA right now because the project status is ${project.status}.`;
-           }
+           toolResult = "QA checks have been disabled for this project.";
         } else if (functionName === "deploy_project") {
-           if (["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status)) {
+           // Allow deployment if QA passed (legacy), or if Auto-Fix succeeded, or if already deployed/failed
+           const canDeploy = ["qa_passed", "deployed", "deploy_failed", "qa_failed"].includes(project.status) || 
+                             project.autoFixStatus === "success" || 
+                             project.readyForDeploy === "true";
+
+           if (canDeploy) {
               await storage.updateProject(id, { status: "deploying" });
               
               deployProject(project).then(async (deployResult) => {
@@ -1637,7 +1531,7 @@ resource "digitalocean_droplet" "web" {
               
               toolResult = "I have initiated the deployment process. Good luck!";
            } else {
-              toolResult = "I cannot deploy the project yet. Please ensure it has passed QA or is in a valid state.";
+              toolResult = "I cannot deploy the project yet. Please ensure the Auto-Fix process has completed successfully.";
            }
         }
 

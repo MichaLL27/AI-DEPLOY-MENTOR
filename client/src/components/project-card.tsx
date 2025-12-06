@@ -28,28 +28,7 @@ interface ProjectCardProps {
 export function ProjectCard({ project }: ProjectCardProps) {
   const { toast } = useToast();
 
-  const runQaMutation = useMutation({
-    mutationFn: async () => {
-      const response = await apiRequest("POST", `/api/projects/${project.id}/run-qa`);
-      return response.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects", project.id] });
-      toast({
-        title: "QA completed",
-        description: "Quality checks have passed successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      toast({
-        title: "QA failed",
-        description: error.message,
-        variant: "destructive",
-      });
-    },
-  });
+
 
   const deployMutation = useMutation({
     mutationFn: async () => {
@@ -74,10 +53,10 @@ export function ProjectCard({ project }: ProjectCardProps) {
     },
   });
 
-  const canRunQa = project.status === "registered" || project.status === "qa_failed";
-  const canDeploy = project.status === "qa_passed";
+  const canRunQa = false;
+  const canDeploy = project.status === "qa_passed" || project.autoFixStatus === "success" || project.readyForDeploy === "true";
   const isDeployed = project.status === "deployed";
-  const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
+  const isRunningQa = project.status === "qa_running";
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
 
   return (
@@ -129,24 +108,6 @@ export function ProjectCard({ project }: ProjectCardProps) {
             <StatusBadge status={project.status} />
 
             <div className="flex items-center gap-2 ml-auto sm:ml-0">
-              {canRunQa && (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => runQaMutation.mutate()}
-                  disabled={isRunningQa}
-                  className="h-8 text-xs font-medium"
-                  data-testid={`button-run-qa-${project.id}`}
-                >
-                  {isRunningQa ? (
-                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
-                  ) : (
-                    <PlayCircle className="h-3.5 w-3.5 mr-1.5" />
-                  )}
-                  Run QA
-                </Button>
-              )}
-
               {canDeploy && (
                 <Button
                   size="sm"

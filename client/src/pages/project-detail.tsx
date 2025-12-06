@@ -17,6 +17,7 @@ import { NormalizationBadge } from "@/components/normalization-badge";
 import { AutoFixBadge } from "@/components/auto-fix-badge";
 import { PullRequestList } from "@/components/pull-request-list";
 import { MonitoringPanel } from "@/components/monitoring-panel";
+import { EnvVarsManager } from "@/components/env-vars-manager";
 import type { PullRequest } from "@shared/schema";
 import {
   ArrowLeft,
@@ -172,57 +173,7 @@ export default function ProjectDetail() {
     queryKey: ["/api/config/providers"],
   });
 
-  const runQaMutation = useMutation({
-    mutationFn: async () => {
-      setShowQaDialog(true);
-      const response = await apiRequest("POST", `/api/projects/${id}/run-qa`);
-      return response.json();
-    },
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
-      queryClient.invalidateQueries({ queryKey: ["/api/projects"] });
-      
-      // Dialog stays open to show results
-      
-      if (data.status === "qa_running") {
-        toast({
-          title: "QA Started",
-          description: "Quality checks are running in the background...",
-        });
-        return;
-      }
 
-      if (data.status === "qa_failed") {
-        toast({
-          title: "QA failed",
-          description: "Quality checks failed. Please check the report.",
-          variant: "destructive",
-        });
-        openChatWithContext("The QA checks failed. Can you analyze the report and tell me how to fix the issues?");
-      } else {
-        // Check if fixes were applied
-        const fixes = data.qaReport?.match(/\[QA Auto-Fix\] Applied (\d+) fixes/);
-        const fixCount = fixes ? fixes[1] : 0;
-        
-        toast({
-          title: fixCount > 0 ? `QA Passed with ${fixCount} Auto-Fixes` : "QA completed",
-          description: fixCount > 0 
-            ? "Issues were detected and automatically repaired by AI." 
-            : "Quality checks have passed successfully.",
-        });
-        openChatWithContext("QA passed successfully! Please congratulate me and tell me if I'm ready to deploy.");
-      }
-    },
-    onError: (error: Error) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/projects", id] });
-      toast({
-        title: "QA failed",
-        description: error.message,
-        variant: "destructive",
-      });
-      openChatWithContext(`The QA process failed to run with this error: ${error.message}. What should I do?`);
-    },
-  });
 
   const deployMutation = useMutation({
     mutationFn: async () => {
@@ -442,12 +393,11 @@ export default function ProjectDetail() {
     );
   }
 
-  const canRunQa = (project.status === "registered" || project.status === "qa_failed") && 
-    project.autoFixStatus === "success";
+  const canRunQa = false;
   
-  const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed" || project.status === "qa_failed";
+  const canDeploy = project.status === "qa_passed" || project.status === "deployed" || project.status === "deploy_failed" || project.status === "qa_failed" || project.autoFixStatus === "success" || project.readyForDeploy === "true";
   const isDeployed = project.status === "deployed";
-  const isRunningQa = project.status === "qa_running" || runQaMutation.isPending;
+  const isRunningQa = project.status === "qa_running";
   const isDeploying = project.status === "deploying" || deployMutation.isPending;
   const canGenerateAndroid = isDeployed && project.deployedUrl;
   const isGeneratingAndroid = generateAndroidMutation.isPending || project.mobileAndroidStatus === "building";
@@ -461,12 +411,10 @@ export default function ProjectDetail() {
   // Determine current step for stepper
   let currentStep = 0;
   if (project.autoFixStatus === "success") currentStep = 1;
-  if (project.status === "qa_passed" || project.status === "qa_failed" || project.status === "deploy_failed") currentStep = 2;
-  if (project.status === "deployed") currentStep = 3;
+  if (project.status === "deployed") currentStep = 2;
 
   // Override for specific states
-  if (project.status === "qa_running") currentStep = 1; // QA is running, so we are past step 1
-  if (project.status === "deploying") currentStep = 2; // Deploying, so we are past step 2
+  if (project.status === "deploying") currentStep = 1; // Deploying
 
   const steps = [
     { 
@@ -474,12 +422,6 @@ export default function ProjectDetail() {
       label: "Analysis & Fix", 
       description: "Code repair & Env detection",
       status: project.autoFixStatus === "success" ? "completed" : project.autoFixStatus === "failed" ? "error" : "pending"
-    },
-    { 
-      id: "qa", 
-      label: "Quality Assurance", 
-      description: "Run tests & checks",
-      status: project.status === "qa_passed" ? "completed" : project.status === "qa_failed" ? "error" : "pending"
     },
     { 
       id: "deploy", 
@@ -563,23 +505,6 @@ export default function ProjectDetail() {
                   </Button>
                 )}
 
-                {canRunQa && (
-                  <Button
-                    variant={canAutoFix ? "outline" : "default"}
-                    onClick={() => runQaMutation.mutate()}
-                    disabled={isRunningQa}
-                    className="bg-white dark:bg-slate-800 shadow-sm"
-                    data-testid="button-run-qa"
-                  >
-                    {isRunningQa ? (
-                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                    ) : (
-                      <PlayCircle className="h-4 w-4 mr-2" />
-                    )}
-                    Run QA
-                  </Button>
-                )}
-
                 {canDeploy && (
                   <Button
                     variant={project.status === "qa_failed" ? "destructive" : "default"}
@@ -616,15 +541,13 @@ export default function ProjectDetail() {
               <div className="space-y-2">
                 <h3 className="text-2xl font-semibold tracking-tight">
                   {currentStep === 0 && "Phase 1: Analysis & Repair"}
-                  {currentStep === 1 && "Phase 2: Quality Assurance"}
-                  {currentStep === 2 && "Phase 3: Production Deployment"}
-                  {currentStep === 3 && "Project is Live"}
+                  {currentStep === 1 && "Phase 2: Production Deployment"}
+                  {currentStep === 2 && "Project is Live"}
                 </h3>
                 <p className="text-muted-foreground text-base">
                   {currentStep === 0 && "We'll scan your code, fix common errors, generate missing config files, and detect environment variables."}
-                  {currentStep === 1 && "We'll run a comprehensive quality assurance check to ensure your app is stable and bug-free."}
-                  {currentStep === 2 && "We'll sync your environment variables and push your application to the cloud."}
-                  {currentStep === 3 && "Your application is running successfully. You can monitor its status below."}
+                  {currentStep === 1 && "We'll sync your environment variables and push your application to the cloud."}
+                  {currentStep === 2 && "Your application is running successfully. You can monitor its status below."}
                 </p>
               </div>
 
@@ -646,22 +569,6 @@ export default function ProjectDetail() {
                 )}
 
                 {currentStep === 1 && (
-                  <Button
-                    onClick={() => runQaMutation.mutate()}
-                    disabled={isRunningQa}
-                    size="lg"
-                    className="h-12 px-8 text-base bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-700 hover:to-cyan-700 text-white shadow-lg shadow-blue-500/20 transition-all hover:scale-105"
-                  >
-                    {isRunningQa ? (
-                      <Loader2 className="h-5 w-5 mr-2 animate-spin" />
-                    ) : (
-                      <PlayCircle className="h-5 w-5 mr-2" />
-                    )}
-                    Run QA Checks
-                  </Button>
-                )}
-
-                {currentStep === 2 && (
                   <div className="flex flex-col items-center gap-4 w-full">
                     <div className="flex items-center gap-3 bg-muted/50 p-2 rounded-lg border">
                       <span className="text-sm font-medium text-muted-foreground pl-2">Deploy to:</span>
@@ -713,7 +620,7 @@ export default function ProjectDetail() {
                   </div>
                 )}
                 
-                {currentStep === 3 && (
+                {currentStep === 2 && (
                    <Button
                     variant="outline"
                     size="lg"
@@ -793,10 +700,9 @@ export default function ProjectDetail() {
               <div className="flex-1 z-10">
                 <h4 className="font-semibold text-green-900 dark:text-green-100">{autoReadyMessage}</h4>
                 <p className="text-sm text-green-700 dark:text-green-300 mt-1 mb-4">
-                  This project was automatically normalized, repaired and validated. Please run QA to verify before deployment.
+                  This project was automatically normalized, repaired and validated. You can now deploy it.
                 </p>
                 <div className="flex flex-wrap gap-3">
-                  {project.status === "qa_passed" ? (
                     <Button
                       onClick={() => deployMutation.mutate()}
                       disabled={isDeploying}
@@ -811,22 +717,6 @@ export default function ProjectDetail() {
                       )}
                       Deploy Now
                     </Button>
-                  ) : (
-                    <Button
-                      onClick={() => runQaMutation.mutate()}
-                      disabled={isRunningQa}
-                      size="sm"
-                      className="bg-green-600 hover:bg-green-700 text-white shadow-sm"
-                      data-testid="button-qa-now-ready"
-                    >
-                      {isRunningQa ? (
-                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                      ) : (
-                        <PlayCircle className="h-4 w-4 mr-2" />
-                      )}
-                      Run QA Check
-                    </Button>
-                  )}
                   {project.autoFixReport && (
                     <Button
                       variant="outline"
@@ -1150,6 +1040,10 @@ export default function ProjectDetail() {
                   </div>
                 )}
 
+                <div className="mt-6">
+                  <EnvVarsManager projectId={id} />
+                </div>
+
                 {files && files.files.length > 0 && (
                   <div className="group border rounded-xl overflow-hidden bg-white/50 dark:bg-slate-900/50 hover:bg-white dark:hover:bg-slate-900 transition-all duration-200 shadow-sm hover:shadow-md">
                     <button
@@ -1397,7 +1291,7 @@ export default function ProjectDetail() {
               <div className="text-center py-6 text-muted-foreground">
                 <p className="text-sm">
                   {project.status === "registered"
-                    ? "Run QA checks to generate a report"
+                    ? "Run Auto-Fix to prepare for deployment"
                     : project.status === "qa_passed"
                     ? "Deploy your project to get a live URL"
                     : "Waiting for deployment..."}
@@ -1521,14 +1415,11 @@ export default function ProjectDetail() {
             </Button>
             {!isAutoFixing && project.autoFixStatus === 'success' && (
               <Button 
-                onClick={() => {
-                  setShowAutoFixDialog(false);
-                  runQaMutation.mutate();
-                }}
+                onClick={() => setShowAutoFixDialog(false)}
                 className="bg-green-600 hover:bg-green-700 text-white"
               >
-                Proceed to QA
-                <PlayCircle className="ml-2 h-4 w-4" />
+                Done
+                <CheckCircle className="ml-2 h-4 w-4" />
               </Button>
             )}
           </DialogFooter>

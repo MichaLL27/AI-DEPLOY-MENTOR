@@ -117,9 +117,6 @@ export function AiMentorChat({ projectId, isOpen, onOpenChange, initialMessage, 
                       <div className="bg-muted p-2 rounded border cursor-pointer hover:bg-muted/80 transition-colors" onClick={() => handleSend("Run Auto-Fix on my project")}>
                         "Run Auto-Fix on my project"
                       </div>
-                      <div className="bg-muted p-2 rounded border cursor-pointer hover:bg-muted/80 transition-colors" onClick={() => handleSend("Run QA checks")}>
-                        "Run QA checks"
-                      </div>
                       <div className="bg-muted p-2 rounded border cursor-pointer hover:bg-muted/80 transition-colors" onClick={() => handleSend("Explain the project structure")}>
                         "Explain the project structure"
                       </div>

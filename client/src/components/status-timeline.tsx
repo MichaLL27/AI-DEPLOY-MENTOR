@@ -10,7 +10,7 @@ const steps = [
   { id: "build", label: "Build Started" },
   { id: "analysis", label: "AI Analysis" },
   { id: "fixing", label: "Auto-Fixing" },
-  { id: "qa", label: "QA Check" },
+  // { id: "qa", label: "QA Check" }, // Skipped
   { id: "deploy", label: "Deployment" },
   { id: "monitor", label: "Monitoring" },
 ] as const;
@@ -50,28 +50,12 @@ function getStepState(
       }
       return "pending";
 
-    case "qa":
-      // Check if QA actually failed based on report content, even if we moved past it
-      const qaFailed = project.qaReport?.includes("Status: FAILED") || project.qaReport?.includes("Result: FAIL");
-      
-      if (status === "qa_passed") return "completed";
-      if (status === "deploying" || status === "deployed" || status === "deploy_failed") {
-        // If we deployed anyway despite failure, show as failed but completed (maybe orange?)
-        // Or just keep it failed red to indicate the risk taken
-        if (qaFailed) return "failed";
-        return "completed";
-      }
-      if (status === "qa_running") return "running";
-      if (status === "qa_failed") return "failed";
-      // QA is next after fixing is done or skipped
-      if (autoFixStatus === "success") return "current";
-      return "pending";
-
     case "deploy":
       if (status === "deployed") return "completed";
       if (status === "deploying") return "running";
       if (status === "deploy_failed") return "failed";
       if (status === "qa_passed") return "current";
+      if (autoFixStatus === "success") return "current";
       return "pending";
 
     case "monitor":

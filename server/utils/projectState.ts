@@ -6,7 +6,7 @@ export function getAutoReadyMessage(project: Project): string | null {
     project.autoFixStatus === "success" &&
     project.readyForDeploy === "true"
   ) {
-    return "Fixed automatically – ready for QA";
+    return "Fixed automatically – ready for Deployment";
   }
   return null;
 }
